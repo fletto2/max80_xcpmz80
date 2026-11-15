@@ -514,6 +514,13 @@ if [ "$(uname)" = Linux ]; then
 		check "C: a blank name, a path or a second colon is refused" "names 1 1 1 1" "$out"
 		check "C: printf takes no argument for an unknown conversion" "unknown [j ok]" "$out"
 		check "C: printf's %lld takes 8 bytes" "lld [5 ok]" "$out"
+		check "C: printf's hh narrows" "hh [44 44 ff]" "$out"
+		check "C: %ln and %hhn store 4 bytes and 1" "n 2 L 4 G" "$out"
+		check "C: %#.0o of 0 is one 0" "oct [0] [010]" "$out"
+		check "C: %.Ns reads no more than N bytes" "prec [xy|z|]" "$out"
+		check "C: scanf's %ln and %hhn by their size" "scann 2 L 5 G" "$out"
+		check "C: cpm_findfirst with no match leaves the name" "nomatch -1 keep" "$out"
+		check "C: bsearch over 40000 elements" "bsearch40k found" "$out"
 		check "C: append to a text file with bytes after its ^Z" "append [abcd]" "$out"
 		out=$(python3 tools/session.py "-a $T/ct.imd" 'ctest\r' '@?name?' 'Walrus\r' '@?A:\>')
 		check "C: errx runs the program's atexit functions" "atexit ran" "$out"
