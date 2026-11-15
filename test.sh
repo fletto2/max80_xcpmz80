@@ -907,6 +907,17 @@ EOF
 		check "VI takes its commands with Caps Lock on at the prompt" "A:\\>DIR VI.TXT" "$out"
 		getfile $T/out/vi3.imd VI.TXT $T/out/VI3.TXT
 		check "and x and :wq in lower case" "=ne two three" "=$(head -1 $T/out/VI3.TXT)"
+		# Counts on e, so c2w too, which runs as c2e, and ` as vi's
+		# exclusive motion: c2w on line 1, 3e then x on line 2,
+		# a mark on line 3's second word and d`b from the line's start
+		out=$(python3 tools/session.py "-a $T/vi.imd -w a:$T/out/vi5.imd" \
+			'vi vi.txt\r' @40 'c2wZ\x1b' @5 'j03ex' @5 'j0wmb0d`b' @5 ':wq\r' @20)
+		getfile $T/out/vi5.imd VI.TXT $T/out/VI5.TXT
+		check "VI: c2w changes two words" "=Z three" "=$(sed -n 1p $T/out/VI5.TXT | tr -d '\r')"
+		check "and 3e goes to the third word's end" "=four five si" \
+			"=$(sed -n 2p $T/out/VI5.TXT | tr -d '\r')"
+		check "and d\`b stops before the mark" "=eight nine" \
+			"=$(sed -n 3p $T/out/VI5.TXT | tr -d '\r')"
 		# The back arrow rubs out while typing and on the : line, as at
 		# A:\>: XYZ, two back, Q, then :wqx, one back
 		out=$(python3 tools/session.py "-a $T/vi.imd -w a:$T/out/vi3.imd" \
