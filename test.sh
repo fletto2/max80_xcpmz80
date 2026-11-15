@@ -918,6 +918,22 @@ EOF
 			"=$(sed -n 2p $T/out/VI5.TXT | tr -d '\r')"
 		check "and d\`b stops before the mark" "=eight nine" \
 			"=$(sed -n 3p $T/out/VI5.TXT | tr -d '\r')"
+		# The commands added to STEVIE: d/thr on line 1, << on
+		# 8 spaces, << then u on 4 spaces, two x then U on the last line
+		printf 'one two three four\n        five six\n    seven\nten\n' >$T/VI6.TXT
+		mkdisk $T/vi6.imd $C/CLIB.SYS $C/VI.COM $T/VI6.TXT >/dev/null
+		out=$(python3 tools/session.py "-a $T/vi6.imd -w a:$T/out/vi6.imd" \
+			'vi vi6.txt\r' @40 'd/thr\r' @5 'j<<' @5 'j<<' @5 'u' @5 \
+			'jxx' @5 'U' @5 ':wq\r' @20)
+		getfile $T/out/vi6.imd VI6.TXT $T/out/VI6.TXT
+		check "VI: d/pat deletes up to the match" "=three four" \
+			"=$(sed -n 1p $T/out/VI6.TXT | tr -d '\r')"
+		check "and << takes out 8 spaces" "=five six" \
+			"=$(sed -n 2p $T/out/VI6.TXT | tr -d '\r')"
+		check "and u puts back what << took" "=    seven" \
+			"=$(sed -n 3p $T/out/VI6.TXT | tr -d '\r')"
+		check "and U puts back the line" "=ten" \
+			"=$(sed -n 4p $T/out/VI6.TXT | tr -d '\r')"
 		# The back arrow rubs out while typing and on the : line, as at
 		# A:\>: XYZ, two back, Q, then :wqx, one back
 		out=$(python3 tools/session.py "-a $T/vi.imd -w a:$T/out/vi3.imd" \
