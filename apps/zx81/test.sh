@@ -153,7 +153,10 @@ check "FRAMES: 10 seconds, 500 frames" "near 500" "$out"
 # LAST_K: K is F7BFh, with SHIFT F6BFh, in codes from 26h. No -K here,
 # so a small letter is the key alone
 hexz() { python3 -c "print(''.join(chr(0x26+int(c,16))+'@' for c in '$1'))"; }
-out=$($EMU -f -T -a $T/a.imd -e 'A:\>' -k 'ZX81 WATCH /Y\E\P\P\P\P\P\P\Pk' -t 9 2>&1 | tr -d '\000')
+# The key is pressed four times: the emulator holds a key 3 ticks, and
+# whether WATCH's loop reads LAST_K in that time went with the tick's
+# phase, which a kernel 2K smaller moved
+out=$($EMU -f -T -a $T/a.imd -e 'A:\>' -k 'ZX81 WATCH /Y\E\P\P\P\P\P\P\Pkkkk' -t 9 2>&1 | tr -d '\000')
 key=$(printf '%s\n' "$out" | python3 -c "
 import sys
 for l in sys.stdin:
@@ -273,7 +276,11 @@ out=$($EMU -f -T -a $T/e.imd -e 'A:\>' -k 'ZX81 KEYS /F /Y\E\P\P\P\P\P\Pk\P' -t 
 check "KEYBOARD at 02BBh: K" "@@@@@@@@$(hexd f7bf)" "$out"
 check "DECODE of it: K" "@@@@@@@@$(zt K)@@" "$out"
 check "and its index" "@@@@@@@@$(hexd 20)@@" "$out"
-out=$($EMU -f -T -a $T/e.imd -e 'A:\>' -k 'ZX81 KEYS /F /Y\E\P\P\P\P\P\P\PK\P\P' -t 11 2>&1)
+# SHIFT K is pressed four times: KEYS shows a scan only when the one
+# before it was the same, so a press must span two of its scans, and
+# a single one can fall between them as the kernel's size moves the
+# timing
+out=$($EMU -f -T -a $T/e.imd -e 'A:\>' -k 'ZX81 KEYS /F /Y\E\P\P\P\P\P\P\PKKKK\P\P' -t 11 2>&1)
 check "KEYBOARD: SHIFT K" "@@@@@@@@$(hexd f6bf)" "$out"
 check "DECODE takes the ROM's table with SHIFT" "@@@@@@@@$(zt F)@@" "$out"
 check "and its index" "@@@@@@@@$(hexd 47)@@" "$out"
@@ -320,9 +327,12 @@ b=$(cnt 9 '')
 out=$(python3 -c "r=(${b:-0}-${a:-0})/4; print('near %d' % r if 3200<r<3900 else 'off %d' % r)")
 check "ZX81 speed: about 0.81 MHz for the game" "near" "$out"
 echo "     $out passes a second, 3540 wanted"
+# Over 4 s, as the plain speed: the count on the screen moves in bursts,
+# and over 2 s it went from 4571 to 4278 when the kernel's size moved
+# the phase. Plain is about 3540, /F about 4500 to 4800
 a=$(cnt 5 ' /F')
-b=$(cnt 7 ' /F')
-out=$(python3 -c "r=((${b:-0}-${a:-0})&65535)/2; print('faster' if r>4500 else 'off %d'%r)")
+b=$(cnt 9 ' /F')
+out=$(python3 -c "r=((${b:-0}-${a:-0})&65535)/4; print('faster' if r>4200 else 'off %d'%r)")
 check "/F: faster" "faster" "$out"
 
 if [ -f "$ROM" ]; then

@@ -1,5 +1,7 @@
-; xcpmz80 FORMAT and SYS. Kept in common memory, run from the
-; shell with A2 mapped.
+; xcpmz80 FORMAT and SYS, out of the kernel for room: the body
+; of FORMAT.COM and SYS.COM (apps/format.asm), assembled against the
+; kernel's labels and run by function 201 as an overlay in the TPA's
+; common part at OVLORG, with A2 mapped, as the built-in commands were.
 ;
 ; FORMAT d: writes every track of a floppy in the layout of Lobo's
 ; COPIER (17 x 512-byte MFM sectors numbered 0 to 16), then an empty
@@ -20,7 +22,6 @@
 
 SYSBUF		equ	1000h		; in the TPA
 	assert	high fmtslt == high (fmtslt+17)	; fslots, trkbuild
-FMTSZ		equ	11900		; 18 sectors of 1.44M, gap 84
 	assert	FMTSZ & 0FFh		; the count in B is not 0
 
 ; FORMAT d:, FORMAT d: size [PC] (fmtab), or FORMAT d: MB
@@ -43,7 +44,7 @@ cformat: call	memchk
 	jp	c,fmt_use
 	ld	a,(hl)
 	or	a
-	jr	z,fmt_1
+	jp	z,fmt_1
 	ld	de,fmtab
 fmt_r:	ld	a,(de)
 	or	a
@@ -68,13 +69,32 @@ fmt_h:
 	cp	33
 	jp	nc,fmt_use
 	ld	(fmtmb),a
-	call	hdsize			; its last sector must read: a drive
-	dec	hl			; smaller than the volume is refused
+	call	pfind			; its partition: Invalid Drive
+	jp	nz,sherr		; for one the disk does not have
+	call	hdsize			; a partition smaller than the volume
+	ex	de,hl			; is refused
+	call	ptptr
+	ld	bc,6
+	add	hl,bc
+	ld	a,(hl)
+	or	a
+	jr	nz,fh_1
+	dec	hl
+	ld	a,(hl)
+	dec	hl
+	ld	l,(hl)
+	ld	h,a
+	or	a
+	sbc	hl,de
+	jr	c,fh_s
+fh_1:	ex	de,hl
+	dec	hl			; its last sector must read: a drive
+					; smaller than the volume is refused
 	ex	de,hl			; before anything is asked or written
 	ld	hl,fmtbuf
 	call	rdsec
 	jr	z,fmt_1
-	call	pmsgsh
+fh_s:	call	pmsgsh
 	db	0Dh,0Ah,"The drive is smaller than that",0Dh,0Ah,0
 fmt_1:	call	pmsg
 	db	0Dh,0Ah,"Format ",0
@@ -387,9 +407,14 @@ fmt_err:	push	af
 
 ; SYS d: the boot code and system of A: onto the FAT volume in d:
 csys:	call	memchk
-	jr	c,sy_use
+	jp	c,sy_use
 	call	mntsh
-	call	sysat			; room for it in the reserved sectors,
+	ld	a,(ix+D_FAT16)		; not on FAT32: its BPB is longer than
+	cp	2			; the boot code leaves room for, and its
+	jr	nz,sy_0			; reserved sectors hold FSInfo
+	call	pmsgsh
+	db	0Dh,0Ah,"Not on FAT32",0Dh,0Ah,0
+sy_0:	call	sysat			; room for it in the reserved sectors,
 	ld	hl,SYSSEC		; from where it goes (a track on in a
 	add	hl,de			; PC's layout) to the first FAT?
 	ex	de,hl
@@ -419,14 +444,14 @@ sy_1:	call	sysget
 sy_use:	call	pmsgsh
 	db	0Dh,0Ah,"SYS d:",0Dh,0Ah,0
 
-; fmtbuf is in the TPA's common part: on to the shell's error if what
-; 0006h points at, an RSX or a program kept in memory, is below its end.
-; Then on into getdrv.
+; fmtbuf and this code are in the TPA's common part: on to the shell's
+; error if what 0006h points at, an RSX or a program kept in memory, is
+; below their end. Then on into getdrv.
 memchk:	push	hl
 	ld	hl,0007h
 	call	upeek
 	pop	hl
-	cp	(fmtbuf+FMTSZ+255)/256
+	cp	(OVLEND+255)/256
 	ld	a,E_NOMEM
 	jp	c,sherr
 ; A = fmtdrv = the drive named at HL, as "B:" or "B". Carry if there
@@ -452,12 +477,6 @@ gd_1:	call	isdelim
 	ld	(fmtdrv),a
 	or	a
 	ret
-
-; Mount drive A as fdrive, or on to the shell's error
-mntsh:	ld	(fdrive),a
-	call	mount
-	ret	z
-	jp	sherr
 
 ; Unmount fmtdrv, then select it
 fmtums:	call	fmtum
@@ -800,6 +819,12 @@ hb_2:	ld	(fmtbuf+0Dh),a
 	ld	(fmtbuf+18h),hl
 	ld	a,80h
 	ld	(fmtbuf+24h),a
+	call	ptptr			; hidden sectors: the partition's first
+	ld	de,fmtbuf+1Ch		; block, 0 on a disk with no table
+	ld	bc,3			;
+	ldir
+	xor	a
+	ld	(de),a
 	ld	hl,1			; spf: up from 1 until the FAT holds
 hb_3:	ld	(fmtbuf+16h),hl		; the clusters
 	ld	de,(fmtbuf+13h)		; data = total - rsvd - 2 * spf - 32

@@ -1,9 +1,9 @@
 # xcpmz80 user's manual
 
 xcpmz80 is a CP/M compatible operating system for the Lobo MAX-80. It
-keeps its files on FAT12 and FAT16 disks, the format a PC uses, so you
-can move files between the MAX-80 and a PC on a floppy. Most CP/M 2.2
-and CP/M 3 programs run on it.
+keeps its files on FAT12, FAT16 and FAT32 disks, the format a PC
+uses, so you can move files between the MAX-80 and a PC on a
+floppy. Most CP/M 2.2 and CP/M 3 programs run on it.
 
 ## Starting up
 
@@ -15,11 +15,13 @@ emulator:
 `-D 1` boots a 5.25-inch or 720K disk instead. The screen shows
 
     XCP/M-Z80 v0.2 for the Lobo MAX-80, 128K, 55K TPA
+    Terminal: Soroc IQ-120, TeleVideo 912/920, ADM-3A
 
     A:\>
 
-`A:\>` is the prompt. The letter is the current drive, and after the
-backslash comes the current folder: `A:\GAMES>`.
+The second line names the terminals to pick when a program's install
+program asks (The terminal, below). `A:\>` is the prompt. The letter
+is the current drive, and after the backslash comes the current folder: `A:\GAMES>`.
 
 The keyboard starts with Caps Lock on, as Lobo's CP/M does. F1 turns
 it off and on. The arrows send ^\ ^] ^^ and ^_ (1Ch to 1Fh), CLEAR
@@ -88,10 +90,25 @@ batch file.
 
 ## Drives and disks
 
-There are three drives. Booted from a floppy, A: and B: are the two
-floppy drives and C: is the SASI hard disk, if there is one. Booted
-from the hard disk, A: is the hard disk and B: and C: are the floppy
-drives.
+There are eight drive letters. The MAX-80 takes four floppy drives.
+Booted from a floppy, A: to D: are the floppy drives and E: is the
+SASI hard disk, if there is one. Booted from the hard disk, A: is the
+hard disk and B: to E: are the floppy drives.
+
+A hard disk with a partition table has a drive for each of its first
+four partitions: from a floppy, E: to H:, from the hard disk, A: then
+F: to H:. A partition is used when it is FAT12, FAT16 or FAT32 (types
+01h, 04h, 06h, 0Eh, 0Bh and 0Ch). A volume made by another system may
+be bigger than 32 MB: the SASI command reaches the disk's first 1 GB.
+A FAT32 volume may have up to 1048574 clusters, so a 1 GB one needs
+clusters of 1K or more, as a PC makes them. Its free space comes from
+its FSInfo sector, which xcpmz80 keeps up to date. FORMAT makes FAT12
+and FAT16 volumes of 32 MB at most, and SYS does not put the system on
+a FAT32 volume (Not on FAT32). A hard disk with
+no table is one drive, E: (or A:), and F: to H: are Invalid Drive, as
+is a partition the table does not have. `FORMAT E: MB` makes a volume
+in that drive's partition, refused when it is bigger than the
+partition. The system boots only from a hard disk with no table.
 
 - An 8-inch disk holds 17 sectors of 512 bytes a track, on one side
   or both.
@@ -140,6 +157,11 @@ the same drive without copying its data. REN renames within one
 folder. DIR shows a folder as `NAME\`, LS as `NAME\` with `<DIR>`. A
 folder's path is at most 46 characters, so folders go 3 or 4 deep.
 
+A program can be run by its path, `\CLOCK`, `..\CLOCK` or
+`B:\GAMES\ZORK`, and is looked for there only. A program named
+alone is looked for in the current folder, then in the top folder.
+Either way it sees the current folder's files, not its own.
+
 The current folder stays when a program ends. If the disk in the drive
 is changed, the drive goes back to the top folder. Programs see the
 files of the current folder, so a CP/M program run in a folder reads
@@ -171,9 +193,6 @@ on an error.
 | `FREE [d:]` | show the free space on a disk |
 | `CLS` or `CLEAR` | clear the screen |
 | `VER` | show the version |
-| `FORMAT d: [size] [PC] [ILV n]` | format a floppy and make it a boot disk. See below |
-| `FORMAT d: MB` | make an empty FAT volume of MB megabytes (1 to 32) on the hard disk, refused if the drive is smaller |
-| `SYS d:` | put the system on a disk that is already formatted |
 | `SUBMIT name [args]` | run `NAME.SUB` as a batch file |
 | `CD`, `MD`, `RD`, `PWD` | folders, above |
 | `HELP [topic]` | list the built-in commands. With a topic, run CP/M 3's `HELP.COM` |
@@ -195,7 +214,43 @@ name's folder.
 COPY reads as much as fits in memory before it writes, so copying
 from one floppy to another moves the heads as little as it can.
 
-### FORMAT
+### Batch files
+
+A `.SUB` file holds one command per line, 2K in all at most, and one
+of exactly 2K must end in ^Z, as text files usually do. `$1` to `$9` are replaced
+by the words after the name:
+
+    A:\>SUBMIT BUILD HELLO
+
+runs `BUILD.SUB` with `$1` as `HELLO`. Typing `BUILD HELLO` does the
+same. A `.BAT` file is the same as a `.SUB` to the shell, run by its
+name. CP/M's own SUBMIT.COM and XSUB also work.
+
+At a cold boot, `AUTOEXEC.BAT` on the boot disk runs by itself, after
+the sign-on, with no parameters: commands to set things up, a font to
+load or a program to start. A batch left unfinished by a reset goes on
+instead. To start without it, boot another disk.
+
+A batch is kept as `A:$$$.SUB` while it runs. When A: is write
+protected or full, it runs from memory instead, the same way, but a
+reset ends it.
+
+## Programs on the boot disk
+
+### FORMAT and SYS
+
+FORMAT.COM and SYS.COM are on every boot disk:
+
+| Command | Does |
+| --- | --- |
+| `FORMAT d: [size] [PC] [ILV n]` | format a floppy and make it a boot disk |
+| `FORMAT d: MB` | make an empty FAT volume of MB megabytes (1 to 32) on the hard disk, or in its partition, refused if the drive or partition is smaller |
+| `SYS d:` | put the system on a disk that is already formatted |
+
+Each runs only on the system it was built with, and says `Not for this
+system` on another: copy FORMAT.COM and SYS.COM from the disk you
+booted, not from an older one.
+
 
     FORMAT B:            8-inch, one side
     FORMAT B: DS         8-inch, both sides
@@ -224,29 +279,6 @@ faster than at 3 and 2. 1.44M disks a PC formatted are at interleave
 1. Each sector written at interleave 1 waits a turn, so
 writing is slower there. Disks at any other interleave are read a
 sector at a time.
-
-### Batch files
-
-A `.SUB` file holds one command per line, 2K in all at most, and one
-of exactly 2K must end in ^Z, as text files usually do. `$1` to `$9` are replaced
-by the words after the name:
-
-    A:\>SUBMIT BUILD HELLO
-
-runs `BUILD.SUB` with `$1` as `HELLO`. Typing `BUILD HELLO` does the
-same. A `.BAT` file is the same as a `.SUB` to the shell, run by its
-name. CP/M's own SUBMIT.COM and XSUB also work.
-
-At a cold boot, `AUTOEXEC.BAT` on the boot disk runs by itself, after
-the sign-on, with no parameters: commands to set things up, a font to
-load or a program to start. A batch left unfinished by a reset goes on
-instead. To start without it, boot another disk.
-
-A batch is kept as `A:$$$.SUB` while it runs. When A: is write
-protected or full, it runs from memory instead, the same way, but a
-reset ends it.
-
-## Programs on the boot disk
 
 ### LDFONT
 
@@ -337,9 +369,11 @@ back to command mode, `x` deletes a character, `dd` a line, `u` undoes,
 `/text` searches, `:w` saves, `:q` quits, `:wq` or `ZZ` saves and
 quits, `:q!` quits without saving. In command mode the arrows move the
 cursor. The back arrow rubs out in insert mode and on the `:` line.
-VI's commands are case sensitive, so VI turns Caps Lock off when it
-starts and back to what it was when it ends. F1 still turns it on and
-off in VI, for typing capitals.
+VI's commands are case sensitive, so with Caps Lock on VI reads a
+command key with its case swapped back: `x` is `x` and `X` is `X`
+whether Caps Lock is on or not, and `:WQ` is `:wq`. What you type as
+text keeps Caps Lock: insert mode, the character after `r`, `f` and
+`t`, and searches. F1 turns it on and off in VI as at the prompt.
 
 A file bigger than memory is edited through a window, as in EMACS.
 `:set bk` keeps the old file as `.BAK` when you save.

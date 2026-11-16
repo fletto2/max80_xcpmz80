@@ -4,7 +4,7 @@ reserved sectors.
 
 Usage: python3 tools/mkdisk.py SYSTEM [--ds] OUT.imd [--raw OUT.img] [FILE...]
        python3 tools/mkdisk.py SYSTEM --pc KB OUT.imd [--raw OUT.img] [FILE...]
-       python3 tools/mkdisk.py SYSTEM --hd MB OUT.img [FILE...]
+       python3 tools/mkdisk.py SYSTEM --hd MB [--fat32] [--mbr] OUT.img [FILE...]
 
 SYSTEM is the assembled boot sector and system image. The floppy format
 is read from the BPB in its first sector, the one place it is defined
@@ -15,6 +15,14 @@ With --hd the disk is a SASI hard disk of MB megabytes (1 to 32), a raw
 image of 512-byte blocks for the emulator's -h: the same boot sector
 and system, with a BPB for the hard disk, FAT16 when it has 4085
 clusters or more.
+
+--fat32 makes the hard disk a FAT32 volume of MB megabytes (33 to
+1024), made by mtools' mformat, with no system: SYS does not put it on
+FAT32. Its clusters are as small as keep them under 1048575, the
+kernel's limit. --mbr puts the volume, FAT32 or the one --hd
+makes, in a partition at block 2048 behind a partition table, its
+hidden sectors 2048: the kernel reads it as the first partition, but
+boots only from a disk with no table.
 
 --pc KB and --525 KB make a floppy of 9 x 512-byte sectors with the
 same reserved sectors as the 8-inch disk. KB is 360 (5.25-inch, 40
@@ -274,6 +282,61 @@ def folder_args(args):
     return out
 
 
+def fat32_disk(mb, out, files):
+    """A FAT32 volume of MB megabytes holding FILES, made by mtools in
+    OUT, and its bytes"""
+    import subprocess
+    if not 33 <= mb <= 1024:
+        raise SystemExit('--fat32: 33 to 1024 megabytes')
+    total = mb * 2048
+    spc = 1
+    while total // spc > 1048000:
+        spc *= 2
+    with open(out, 'wb') as f:
+        f.truncate(total * 512)
+
+    def mt(*cmd):
+        subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL)
+    mt('mformat', '-i', out, '-F', '-T', str(total), '-h', '16', '-s', '32',
+       '-c', str(spc), '::')
+    made = set()
+    for f in files:
+        folder, path = f if isinstance(f, tuple) else (None, f)
+        name = os.path.basename(path).upper()
+        dest = '::/' + name
+        if folder:
+            folder = folder.upper()
+            if folder not in made:
+                mt('mmd', '-i', out, '::/' + folder)
+                made.add(folder)
+            dest = '::/%s/%s' % (folder, name)
+        mt('mcopy', '-i', out, path, dest)
+    return open(out, 'rb').read()
+
+
+def with_mbr(vol, base=2048):
+    """VOL in a partition at block BASE behind a partition table, its
+    BPB's hidden sectors BASE, a FAT32 one's backup boot sector too"""
+    vol = bytearray(vol)
+    spf16 = struct.unpack_from('<H', vol, 0x16)[0]
+    total = len(vol) // 512
+    struct.pack_into('<I', vol, 0x1c, base)
+    if spf16 == 0:                  # FAT32: and its backup boot sector
+        back = struct.unpack_from('<H', vol, 0x32)[0]
+        if back:
+            struct.pack_into('<I', vol, back * 512 + 0x1c, base)
+        kind = 0x0c
+    elif vol[0x36:0x3b] == b'FAT12':
+        kind = 0x01
+    else:
+        kind = 0x06 if total >= 65536 else 0x04
+    mbr = bytearray(512)
+    struct.pack_into('<B3sB3sII', mbr, 0x1be, 0, b'\xfe\xff\xff', kind,
+                     b'\xfe\xff\xff', base, total)
+    mbr[510:] = b'\x55\xaa'
+    return bytes(mbr) + bytes((base - 1) * 512) + bytes(vol)
+
+
 def stale(path):
     """True if SYSTEM is older than the src/ beside its build/ folder. A
     disk made from such a file carries an old kernel and boot sector and
@@ -303,10 +366,18 @@ def main():
         for opt in ('--ilv', '--skew', '--hskew', '--ss', '--ds', '--pc', '--525'):
             if opt in args:
                 raise SystemExit('--hd: %s is for a floppy' % opt)
+        fat32 = '--fat32' in args
+        mbr = '--mbr' in args
+        args = [a for a in args if a not in ('--fat32', '--mbr')]
         if len(args) < 2:
             raise SystemExit(__doc__)
-        system = hd_bpb(open(args[0], 'rb').read(), mb)
-        disk, p = build(system, folder_args(args[2:]))
+        if fat32:
+            disk = fat32_disk(mb, args[1], folder_args(args[2:]))
+        else:
+            system = hd_bpb(open(args[0], 'rb').read(), mb)
+            disk, p = build(system, folder_args(args[2:]))
+        if mbr:
+            disk = with_mbr(disk)
         open(args[1], 'wb').write(disk)
         if raw:             # the image is raw already: the same bytes
             open(raw, 'wb').write(disk)

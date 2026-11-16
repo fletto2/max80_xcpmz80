@@ -2,12 +2,23 @@
 ; ZX81.COM's tests. With a key down: its scan in hex on line 0, the
 ; character DECODE finds on line 1, DECODE's index in hex on line 2.
 ; Digits are codes 26h on.
+; A scan is shown only when the one before it was the same: a scan
+; that reads SHIFT's row and K's on either side of a key going up gives
+; K alone, as the machine's would, and the next scan is no key, so it
+; never shows (which scans fell on the edge went with the
+; kernel's size).
 
 D_FILE	equ	400Ch
 
 	org	4082h
 
 loop:	call	02BBh
+	ld	de,(prev)	; the same as the scan before?
+	ld	(prev),hl
+	or	a
+	sbc	hl,de
+	add	hl,de
+	jr	nz,loop
 	ld	a,h
 	and	l
 	inc	a		; FFFFh: no key
@@ -34,6 +45,8 @@ loop:	call	02BBh
 	add	hl,de
 	call	hex2
 	jr	loop
+
+prev:	dw	0FFFFh
 
 hex4:	ld	a,d		; HL to, DE the word
 	call	hex2

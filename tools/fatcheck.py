@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Check a FAT12 or FAT16 volume the way fsck does, without changing it:
-every FAT copy the same, each file's chain the length its size needs,
-each folder's . and .. right, no cluster in two chains, no used
-cluster in no chain. Folders are followed.
+"""Check a FAT12, FAT16 or FAT32 volume the way fsck does, without
+changing it: every FAT copy the same, each file's chain the length its
+size needs, each folder's . and .. right, no cluster in two chains, no
+used cluster in no chain, and on FAT32 FSInfo's free count the free
+clusters, if it gives one. Folders are followed.
 
 Usage: python3 tools/fatcheck.py IMAGE
 
@@ -19,11 +20,13 @@ def check(disk):
         '<HBHBHHBH', disk, 0x0b)
     if total == 0:
         total = struct.unpack_from('<I', disk, 0x20)[0]
+    if spf == 0:
+        spf = struct.unpack_from('<I', disk, 0x24)[0]
     root0 = rsvd + nfats * spf
     data0 = root0 + nroot * 32 // bps
     nclus = (total - data0) // spc
-    bits = 16 if nclus >= 4085 else 12
-    eoc = 0xff8 if bits == 12 else 0xfff8
+    bits = 32 if nclus >= 65525 else 16 if nclus >= 4085 else 12
+    eoc = {12: 0xff8, 16: 0xfff8, 32: 0xffffff8}[bits]
     faults = []
 
     fats = [disk[(rsvd + k * spf) * bps:(rsvd + (k + 1) * spf) * bps]
@@ -34,6 +37,8 @@ def check(disk):
     fat = fats[0]
 
     def get(n):
+        if bits == 32:
+            return struct.unpack_from('<I', fat, n * 4)[0] & 0xfffffff
         if bits == 16:
             return struct.unpack_from('<H', fat, n * 2)[0]
         v = struct.unpack_from('<H', fat, n * 3 // 2)[0]
@@ -74,6 +79,8 @@ def check(disk):
             name = (e[:8].decode('latin-1').rstrip() + '.' +
                     e[8:11].decode('latin-1').rstrip())
             first, size = struct.unpack_from('<HI', e, 26)
+            if bits == 32:
+                first |= struct.unpack_from('<H', e, 20)[0] << 16
             if e[11] & 0x10:
                 if e[0] == 0x2e:  # . and ..
                     want = me if e[1] == 0x20 else parent
@@ -102,10 +109,28 @@ def check(disk):
                 faults.append('%s: %d bytes need %d clusters, the chain has %d'
                               % (full, size, need, len(chain)))
 
-    folder(disk[root0 * bps:root0 * bps + nroot * 32], '', 0, 0)
+    def clusters(chain):
+        return b''.join(disk[(data0 + (c - 2) * spc) * bps:
+                             (data0 + (c - 1) * spc) * bps] for c in chain)
+
+    if bits == 32:
+        rootcl = struct.unpack_from('<I', disk, 0x2c)[0]
+        folder(clusters(walk(rootcl, '\\')), '', 0, 0)
+    else:
+        folder(disk[root0 * bps:root0 * bps + nroot * 32], '', 0, 0)
     lost = [n for n in range(2, nclus + 2) if get(n) and n not in owner]
     if lost:
         faults.append('%d lost clusters, the first %d' % (len(lost), lost[0]))
+    if bits == 32:
+        fsi = struct.unpack_from('<H', disk, 0x30)[0] * bps
+        lead, = struct.unpack_from('<I', disk, fsi)
+        sig, free, nxt = struct.unpack_from('<III', disk, fsi + 484)
+        if lead != 0x41615252 or sig != 0x61417272:
+            faults.append('FSInfo: no signature')
+        elif free != 0xffffffff:
+            real = sum(1 for n in range(2, nclus + 2) if get(n) == 0)
+            if free != real:
+                faults.append('FSInfo: %d free, not %d' % (free, real))
     return faults
 
 

@@ -12,6 +12,8 @@ kbdos:	ld	(bparam),de
 	ld	(bret),hl
 	ld	hl,bdret		; every function returns through bdret
 	push	hl
+	cp	OVLFN
+	jp	z,f201
 	cp	NFUNC
 	jr	c,kb_1
 	sub	98			; 98-112
@@ -1151,38 +1153,60 @@ f27_1:	push	bc
 	inc	hl
 	djnz	f27_1
 	ld	hl,2			; then each used cluster's blocks
-f27_2:	push	hl
+	xor	a
+	ld	(clx),a
+f27_2:	ld	a,(clx)
+	push	af
+	push	hl
 	call	fatget
-	ld	a,h
-	or	l
+	call	clzero
 	pop	hl
+	pop	bc
+	ld	a,b
+	ld	(clx),a
 	jr	z,f27_4
 	push	hl
-	dec	hl			; block = dirblks + (cluster - 2) *
-	dec	hl			; sectors per cluster / sectors a block
+	ld	de,-2			; block = dirblks + (cluster - 2) *
+	add	hl,de			; sectors per cluster / sectors a block,
+	adc	a,0FFh			; the sector in 24 bits, f27hi:HL
 	ld	b,(ix+D_SPCSH)
 	inc	b
 	jr	f27_t
 f27_s:	add	hl,hl
+	rla
 f27_t:	djnz	f27_s
+	ld	(f27hi),a
 	ld	a,(ix+D_SPC)		; HL = first sector, the cluster's
 	ld	c,a			; C sectors cover (C+3)/4 blocks
 f27_3:	push	hl
+	ld	a,(f27hi)
+	ld	d,a
 	ld	a,(blkk)
 	add	a,2
 	ld	b,a
-	call	shrhl
+f27_r:	srl	d
+	rr	h
+	rr	l
+	djnz	f27_r
+	ld	a,d			; past 16 bits: past the vector too
+	or	a
+	jr	nz,f27_n
 	ld	a,(dirblks)
 	ld	e,a
-	ld	d,0
 	add	hl,de
 	call	alvset
-	pop	hl
+f27_n:	pop	hl
 	inc	hl
-	dec	c
+	ld	a,h
+	or	l
+	jr	nz,f27_i
+	ld	a,(f27hi)
+	inc	a
+	ld	(f27hi),a
+f27_i:	dec	c
 	jr	nz,f27_3
 	pop	hl
-f27_4:	inc	hl
+f27_4:	call	clinc
 	call	fateoc
 	jr	nc,f27_2
 	ld	hl,ALV
@@ -1235,6 +1259,15 @@ dmount:	ld	(fdrive),a
 ; when the disk has more blocks than the allocation vector holds, as a
 ; CP/M hard disk has. Sets dirblks, the directory blocks, blkk, entk
 ; and bnsz.
+; DE = the root's entries: FAT32's root is a chain, called 512
+rootde:	ld	e,(ix+D_ROOTENT)
+	ld	d,(ix+D_ROOTENT+1)
+	ld	a,d
+	or	e
+	ret	nz
+	ld	de,512
+	ret
+
 mkdpb:	ld	hl,0			; CKS and OFF 0: the rest is set below
 	ld	(DPB+11),hl
 	ld	(DPB+13),hl
@@ -1257,23 +1290,36 @@ mk_k:	ld	a,(blkk)		; dirblks = entries / (64 << blkk),
 mk_2:	add	hl,hl
 	djnz	mk_2
 	dec	hl
-	ld	e,(ix+D_ROOTENT)
-	ld	d,(ix+D_ROOTENT+1)
+	call	rootde
 	add	hl,de
 	ld	b,c
 	call	shrhl
 	ld	a,l
 	ld	(dirblks),a
-	ld	l,(ix+D_TOTAL)		; DSM = dirblks + data sectors /
-	ld	h,(ix+D_TOTAL+1)	; (4 << blkk) - 1
-	ld	e,(ix+D_DATASEC)
-	ld	d,(ix+D_DATASEC+1)
-	or	a
-	sbc	hl,de
+	ld	l,(ix+D_MAXCL)		; DSM = dirblks + data sectors /
+	ld	h,(ix+D_MAXCL+1)	; (4 << blkk) - 1, the data sectors
+	ld	a,(ix+D_MAXCLX)		; the clusters << SPCSH, 24 bits, for
+	ld	de,-1			; a volume past 65535 sectors
+	add	hl,de
+	adc	a,0FFh
+	ld	b,(ix+D_SPCSH)
+	inc	b
+mk_s1:	dec	b
+	jr	z,mk_s2
+	add	hl,hl
+	rla
+	jr	mk_s1
+mk_s2:	ld	c,a
 	ld	a,(blkk)
 	add	a,2
 	ld	b,a
-	call	shrhl
+mk_s3:	srl	c
+	rr	h
+	rr	l
+	djnz	mk_s3
+	ld	a,c			; still past 16 bits: as many as can be
+	or	a
+	jr	nz,mk_big
 	ld	a,(dirblks)
 	ld	e,a
 	ld	d,0
@@ -1282,7 +1328,7 @@ mk_2:	add	hl,hl
 	ld	a,h			; more than ALVSZ * 8 blocks: bigger ones
 	cp	high (ALVSZ*8)
 	jr	c,mk_5
-	ld	a,(blkk)
+mk_big:	ld	a,(blkk)
 	cp	3
 	jr	nc,mk_cap
 	inc	a
@@ -1321,8 +1367,8 @@ mk_9:	add	a,a
 mk_10:	djnz	mk_9
 	dec	a
 	ld	(DPB+3),a
-	ld	l,(ix+D_ROOTENT)	; DRM
-	ld	h,(ix+D_ROOTENT+1)
+	call	rootde			; DRM
+	ex	de,hl
 	dec	hl
 	ld	(DPB+7),hl
 	ld	a,(dirblks)		; AL0, AL1: that many bits from the top
@@ -1524,8 +1570,7 @@ f45:	ld	(scb+SCB_ERMODE),a
 
 ; 46: free space of drive E, in records, 3 bytes into the DMA buffer
 f46:	call	dmchk			; A = E from kbdos
-	call	fatcount		; HL clusters * 4 * SPC records
-	xor	a
+	call	fatcount		; A:HL clusters * 4 * SPC records
 	ld	b,(ix+D_SPCSH)
 	inc	b			; B = SPCSH + 2, 2 at least
 	inc	b

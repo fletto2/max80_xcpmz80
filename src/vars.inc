@@ -26,9 +26,9 @@ sassp		equ	fdcyl			; SASI: the stack to give up to, in
 fodd		equ	drvnum+1
 fbyte		equ	fodd+1
 fsecn		equ	fbyte+2
-fstart		equ	fsecn+2
+fstart		equ	fsecn+2		; 3 bytes, a cluster
 ; files
-fdrive		equ	fstart+2
+fdrive		equ	fstart+3
 dpos		equ	fdrive+1
 dsec		equ	dpos+2
 didx		equ	dsec+2
@@ -43,26 +43,26 @@ fres		equ	foff+2
 ; folders
 CWDLEN		equ	48
 dircl		equ	fres+1		; the folder the directory calls use
-dlast		equ	dircl+2		; its last cluster walked
-dsdirs		equ	dlast+2		; A_DIR: searches find folders too
+dlast		equ	dircl+3		; its last cluster walked
+dsdirs		equ	dlast+3		; A_DIR: searches find folders too
 rootf		equ	dsdirs+1	; 1: mount gives the root, not the folder
 wlast		equ	rootf+1		; walk leaves the last part in spat
 dcl		equ	wlast+1
-rmpos		equ	dcl+2
+rmpos		equ	dcl+3
 rmpar		equ	rmpos+2
-cwdcl		equ	rmpar+2		; each drive's folder, 0 the root
-cwdpth		equ	cwdcl+NDRV*2	; and its path
+cwdcl		equ	rmpar+3		; each drive's folder, 0 the root
+cwdpth		equ	cwdcl+NDRV*3	; and its path
 wpath		equ	cwdpth+NDRV*CWDLEN
 dirov		equ	wpath+CWDLEN	; a path's folder, for drive dirovd,
-dirovd		equ	dirov+2		; FFh none
+dirovd		equ	dirov+3		; FFh none
 ppfcb		equ	dirovd+1
 srcdir		equ	ppfcb+2		; COPY's two folders
-srcdrv		equ	srcdir+2
+srcdrv		equ	srcdir+3
 dstdir		equ	srcdrv+1
-dstdrv		equ	dstdir+2
+dstdrv		equ	dstdir+3
 srcreal		equ	dstdrv+1
 ; numbers and names
-qcount		equ	srcreal+2
+qcount		equ	srcreal+3
 dvlo		equ	qcount+1
 dvhi		equ	dvlo+2
 ; BDOS
@@ -122,7 +122,24 @@ progdrv		equ	tailp+2
 prrecs		equ	progdrv+1
 prfrom		equ	prrecs+2
 prdest		equ	prfrom+2
-BSSEND		equ	prdest+2
+ptab		equ	prdest+2	; each drive's partition, 8 bytes: its first
+					; block (3), number (1), size (3), 1 found
+sblk		equ	ptab+NDRV*8	; sasrw: the block, 3 bytes
+lbax		equ	sblk+3		; a sector number's third byte, beside DE,
+					; for getsec, newsec, rdsec and wrsec:
+					; set by clsec, 0 below the data
+dsecx		equ	lbax+1		; dsec's
+fsectx		equ	dsecx+1		; fsect's
+f27hi		equ	fsectx+1	; BDOS 27: the sector's third byte
+clx		equ	f27hi+1		; a cluster number's third byte, beside HL:
+					; clusters are 24 bits, under 100000h
+cvx		equ	clx+1		; fatset: the value's, beside DE
+fcnt		equ	cvx+1		; fatcount: the free clusters, 3 bytes
+cccl		equ	fcnt+3		; cwdchk: the folder, 3 bytes
+dfree		equ	(cccl+3+31) & 0FFE0h ; each drive's free clusters, 3 bytes in
+					; 4, FFFFFFh not counted since the mount,
+					; in one page
+BSSEND		equ	dfree+NDRV*4
 PZLEN		equ	0B0h
 CBSS		equ	COMMON_END
 pzbuf		equ	CBSS
@@ -171,8 +188,8 @@ fmtslt		equ	fmtilv+1		; the sector in each slot, 18 bytes
 ; MV
 mvflag		equ	fmtslt+18		; not 0: COPY's loop moves
 mvsrc		equ	mvflag+1	; fmove: the source folder
-mvdst		equ	mvsrc+2		; the destination folder
-mvpos		equ	mvdst+2		; the source entry's number
+mvdst		equ	mvsrc+3		; the destination folder
+mvpos		equ	mvdst+3		; the source entry's number
 mvbuf		equ	mvpos+2		; and the entry, 32 bytes
 ; The cache's sectors, last
 rsxtop		equ	mvbuf+32	; what 0006h holds: bdosent or the lowest RSX
@@ -183,15 +200,13 @@ rsxbias		equ	rsxent+2	; rsxload: the page to add, and the base
 rsxhdr		equ	chainbuf	; a .COM file's header record, 128 bytes:
 					; only while the shell loads, after
 					; kwboot has taken a 47 command
-dfree		equ	rsxbias+2	; each drive's free clusters, FFFFh not
-					; counted since the mount, NDRV * 2
-dscdir		equ	dfree+NDRV*2	; dsub's place in a folder's chain: the
-dscix		equ	dscdir+2	; folder, its drive's IX (0 none),
+dscdir		equ	rsxbias+2	; dsub's place in a folder's chain: the
+dscix		equ	dscdir+3	; folder, its drive's IX (0 none),
 dscord		equ	dscix+2		; the cluster's place in the chain,
 dsccl		equ	dscord+2	; and the cluster
-frdrv		equ	dsccl+2		; the fresh cluster's drive + 1, 0 none
+frdrv		equ	dsccl+3		; the fresh cluster's drive + 1, 0 none
 frcl		equ	frdrv+1		; the cluster last allocated to a file
-frnext		equ	frcl+2		; its first sector not yet zeroed
+frnext		equ	frcl+3		; its first sector not yet zeroed
 fdiff		equ	frnext+1	; the IFF before an FDC transfer
 wbdrv		equ	fdiff+1		; a failed write-back's drive + 1, 0 none
 fnpos		equ	wbdrv+1		; frename: the entry being renamed

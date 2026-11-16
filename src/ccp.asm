@@ -1,7 +1,8 @@
 ; xcpmz80 shell. Runs in A2. The command line of CP/M's CCP with
 ; CP/M's built-in commands and the Unix names of the same ones. A
 ; command that is not built in runs NAME.COM, from the current drive
-; or A:, or NAME.SUB or NAME.BAT as a batch file. A:AUTOEXEC.BAT runs
+; or A:, or from a path, \NAME or GAMES\NAME, or NAME.SUB or
+; NAME.BAT as a batch file. A:AUTOEXEC.BAT runs
 ; at a cold boot.
 ; Batch lines come from A:$$$.SUB, last record first, as CP/M 2.2's
 ; SUBMIT writes it, so its SUBMIT.COM works too.
@@ -95,9 +96,9 @@ dc_2:	ld	hl,linebuf
 	jp	z,shell
 	cp	';'			; a comment
 	jp	z,shell
-	ld	de,cmdfcb
-	call	parsefn
-	jp	c,dc_what
+	ld	de,cmdfcb		; a path too, \CLOCK or GAMES\ZORK, which
+	call	parsep			; gives the drive, so it is not built in
+	jp	c,dc_what		; and is looked for there only
 	ld	(cmdtail),hl
 	ld	a,(cmdfcb+1)		; "B:": change drive
 	cp	' '
@@ -215,10 +216,6 @@ btab:	db	"DI",'R'+80h
 	dw	cver
 	db	"HEL",'P'+80h
 	dw	chelp
-	db	"FORMA",'T'+80h
-	dw	cformat
-	db	"SY",'S'+80h
-	dw	csys
 	db	"SUBMI",'T'+80h
 	dw	csubmit
 	db	"C",'D'+80h
@@ -491,16 +488,21 @@ ls_9:	cp	R_NOFILE
 	db	" files, ",0
 
 ; Print "NNNK free" for the mounted drive IX, then back to the prompt
-pfree:	call	fatcount		; clusters * SPC / 2 = K
+pfree:	call	fatcount		; clusters * SPC / 2 = K, in 24 bits:
+					; past 65535 sectors
 	ld	b,(ix+D_SPCSH)
 	inc	b
 	jr	pf__2
 pf__1:	add	hl,hl
+	rla
 pf__2:	djnz	pf__1
-	srl	h
-
+	srl	a
+	rr	h
 	rr	l
-	call	pdec
+	ld	e,a
+	ld	d,0
+	ld	(dvhi),de
+	call	pdec32
 	call	pmsgsh
 	db	"K free",0
 
@@ -816,12 +818,12 @@ cp_8:	call	kbreak
 ; dirov and dirovd to DE: srcdir and srcdrv, or dstdir and dstdrv
 ovsave:	push	hl			; keeps HL, the tail
 	ld	hl,dirov
-	ld	bc,3
+	ld	bc,4
 	ldir
 	pop	hl
 	ret
 
-	assert	dirovd == dirov+2 && srcdrv == srcdir+2 && dstdrv == dstdir+2
+	assert	dirovd == dirov+3 && srcdrv == srcdir+3 && dstdrv == dstdir+3
 
 ; If "to" is the name of a folder, with no \ after it, that folder
 ; becomes the destination and the name is left blank
@@ -844,7 +846,8 @@ cf_1:	ld	a,(hl)			; no wildcards
 	call	namepat
 	call	wpfind
 	ret	nz
-	ld	(dstdir),hl
+	ld	de,dstdir
+	call	stcl
 	ld	a,(drvnum)
 	ld	(dstdrv),a
 	ld	hl,cpdst+1
@@ -863,20 +866,23 @@ mvone:	call	srcset
 	jp	nz,sherr
 	ld	a,(drvnum)
 	push	af
-	ld	hl,(dircl)
-	push	hl
+	ld	hl,dircl		; the source's folder, in srcreal
+	ld	de,srcreal		; until copy1
+	call	cp3
 	call	dstset
 	call	fcbdrv
 	jp	nz,sherr
-	pop	de			; the source's folder and drive
-	pop	af
+	pop	af			; and drive
 	ld	hl,drvnum
 	cp	(hl)
 	jr	nz,mv_x
-	ld	hl,(dircl)
-	ld	(mvdst),hl
-	or	a
-	sbc	hl,de
+	ld	hl,dircl
+	ld	de,mvdst
+	call	cp3
+	ld	hl,mvdst
+	call	ldcl
+	ld	de,srcreal
+	call	clcmp
 	push	af
 	call	srcset
 	ld	hl,cpdst2+1
@@ -928,8 +934,9 @@ fc_36:	ld	bc,36
 copy1:	call	srcset			; open the source, keep its FCB
 	call	fopen
 	call	fchk
-	ld	hl,(dircl)
-	ld	(srcreal),hl
+	ld	hl,dircl
+	ld	de,srcreal
+	call	cp3
 	ld	de,srcfcb
 	call	fromcfcb
 	call	dstset			; the same file? The same drive,
@@ -938,15 +945,16 @@ copy1:	call	srcset			; open the source, keep its FCB
 	call	fcbdrv
 	call	fchk
 	ld	a,(srcfcb+F_DRIVE)
+	and	7
 	ld	b,a
 	ld	a,(cpdst2)
 	dec	a
 	cp	b
 	jr	nz,c1_0
-	ld	hl,(srcreal)
-	ld	de,(dircl)
-	or	a
-	sbc	hl,de
+	ld	hl,srcreal
+	call	ldcl
+	ld	de,dircl
+	call	clcmp
 	jr	nz,c1_0
 	ld	hl,srcfcb+F_NAME
 	ld	de,cpdst2+1
@@ -1085,8 +1093,6 @@ ch_1:	call	pcmsgsh
 	db	"CP, COPY from to",09h,"copy, byte exact",0Dh,0Ah
 	db	"SAVE n name",09h,09h,"save n pages from 0100h",0Dh,0Ah
 	db	"USER n, FREE [d:], CLS, VER",0Dh,0Ah
-	db	"FORMAT d: [MB]",09h,09h,"make a boot disk, MB for the hard disk",0Dh,0Ah
-	db	"SYS d:",09h,09h,09h,"put the system on a disk",0Dh,0Ah
 	db	"d:",09h,09h,09h,"change drive",0Dh,0Ah
 	db	"CD [path], PWD",09h,09h,"change or show the folder",0Dh,0Ah
 	db	"MD, MKDIR path",09h,09h,"make a folder",0Dh,0Ah
@@ -1143,8 +1149,8 @@ sl_file: ld	hl,subname
 	call	rec2b
 	ld	(CFCB+F_SIZE),hl
 	ld	(CFCB+F_SIZE+2),a
-	ld	a,1
-	ld	(CFCB+F_FLAG),a
+	ld	hl,CFCB+F_FLAG
+	set	0,(hl)
 	call	ftrunc			; not cut, on a protected disk: the
 	jr	nz,sl_bad		; line runs once and the batch stops,
 	call	fclose			; or it would run for ever

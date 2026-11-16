@@ -190,6 +190,9 @@ bnull:	ld	hl,0
 ; kind, 8-inch when A: is not a floppy. Puts back the bank it found,
 ; since function 50 calls it with the system mapped. The stack is not
 ; used while the system is in, since a program's stack is in the TPA.
+; Only A: to D: have a DPH: there is room below the vector for four,
+; and Lobo's DRVTBL has none for a hard disk
+NXDPH	equ	4
 bdrvtbl: push	bc
 	push	de
 	push	ix
@@ -199,7 +202,7 @@ bdrvtbl: push	bc
 	ld	(PIODA),a
 	ld	ix,drvtab
 	ld	hl,XDPH
-	ld	b,NDRV
+	ld	b,NXDPH
 xd_1:	ld	de,0
 	ld	a,(ix+D_TYPE)
 	cp	DT_FLOPPY
@@ -216,7 +219,7 @@ xd_2:	ld	d,FD_LATCH
 	jr	z,xd_3
 	ld	d,FD5_LATCH
 	inc	e			; 5-inch: 80 tracks from 1024 sectors
-	ld	a,(ix+D_TOTAL+1)
+	ld	a,(ix+D_TOTALH)
 	cp	4
 	jr	c,xd_3
 	inc	e
@@ -247,13 +250,13 @@ xd_4:	ld	(hl),e
 	ld	hl,dtbl
 	ret
 
-dtbl:	dw	XDPH+2,XDPH+18,XDPH+34
-	dup	13
+dtbl:	dw	XDPH+2,XDPH+18,XDPH+34,XDPH+50
+	dup	12
 	dw	dtnone+2
 	edup
 dtnone:	db	0,0,0,0,0,0,0,0,0,0,0,0,0,0
 	dw	DPB
-	assert	XDPH+NDRV*16 <= IVPAGE*256+0FEh
+	assert	XDPH+NXDPH*16 <= IVPAGE*256+0FEh
 bsectran: ld	h,b
 	ld	l,c
 	ret

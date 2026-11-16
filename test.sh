@@ -164,6 +164,7 @@ check "and the other file's too, the FATs alike" "=B.TXT: chain ends on a free c
 out=$($EMU -a "$DISK" -t 5)
 check "boot to sign-on" "XCP/M-Z80 v0.2 for the Lobo MAX-80" "$out"
 check "finds all 128K" "MAX-80, 128K, 55K TPA" "$out"
+check "and names the terminals for an install program" "Terminal: Soroc IQ-120, TeleVideo 912/920, ADM-3A" "$out"
 check "boot to prompt" 'A:\>' "$out"
 
 out=$($EMU -a "$DISK" -t 15 -e 'A:\>' -k 'hello\rDir *.COM\r')
@@ -428,7 +429,7 @@ check "an empty .COM runs nothing" "A:\\>e|A:\\>dir e.com|" "$out"
 
 # Lobo's console codes (a Soroc IQ-120's): ESC = row col, ESC T, ESC )
 # and 0Ch, cursor right. The second style is the inverse font.
-printf 'a\014b\r\nab\033=\045\050XY\r\nrow2 \033Tgone\r\n\033)dim\033(\r\n' >$T/ESC.TXT
+printf 'a\014b\r\nab\033=\046\050XY\r\nrow2 \033Tgone\r\n\033)dim\033(\r\n' >$T/ESC.TXT
 mkdisk $T/esc.imd $T/ESC.TXT
 out=$($EMU -a $T/esc.imd -T -t 10 -e 'A:\>' -k 'type esc.txt\r' -p $T/out/esc.pgm)
 check "0Ch moves the cursor right" "a b" "$out"
@@ -721,12 +722,12 @@ DMGEOF
 		mkdisk $T/wf.imd $T/W.COM >/dev/null
 		rm -f $T/out/dm.img
 		out=$($EMU -a $T/wf.imd -h $T/dm.img -w h:$T/out/dm.img -T -t 120 \
-			-e 'A:\>' -k 'w c:db.txt\rdir c:\\f\\zz.*\rmd c:\\g\\x\rdir c:\r' | tr -d '\r')
+			-e 'A:\>' -k 'w e:db.txt\rdir e:\\f\\zz.*\rmd e:\\g\\x\rdir e:\r' | tr -d '\r')
 		check "a write to a first cluster out of range fails" "Function 34" "$out"
 		n=$(cmp $T/dm0.img $T/out/dm.img && echo same)
 		check "and the disk is left as it was" "same" "$n"
 		check "a search in a folder that goes round ends" "No file" "$out"
-		check "and the disk is there after it" "C: DA       TXT : DB       TXT" "$out"
+		check "and the disk is there after it" "E: DA       TXT : DB       TXT" "$out"
 		check "a folder whose first cluster is 1, on the root, is not entered" "No folder" "$out"
 		# A full folder whose one cluster points to itself: a new
 		# entry there, which went round for ever, fails
@@ -737,7 +738,7 @@ DMGEOF
 		# 65536 entries tried, some 300 seconds of the machine's time
 		rm -f $T/out/dl.img
 		out=$($EMU -a $T/wf.imd -h $T/dl.img -w h:$T/out/dl.img -T -t 1500 \
-			-e 'A:\>' -k 'save 1 c:\\h\\new.com\r' | tr -d '\r')
+			-e 'A:\>' -k 'save 1 e:\\h\\new.com\r' | tr -d '\r')
 		check "a new file in a full folder that goes round fails" "No file" "$out"
 		n=$(cmp $T/dl.img $T/out/dl.img && echo same)
 		check "and the disk is left as it was" "same" "$n"
@@ -747,7 +748,7 @@ DMGEOF
 			cp $T/dm0.img $T/bp.img
 			python3 $T/dmg.py $T/bp.img bpb $bpb
 			out=$($EMU -a $T/wf.imd -h $T/bp.img -T -t 30 -e 'A:\>' \
-				-k 'dir c:\r' | tr -d '\r' | grep -v '^$' | grep -iA1 'dir c:' | tail -1)
+				-k 'dir e:\r' | tr -d '\r' | grep -v '^$' | grep -iA1 'dir e:' | tail -1)
 			check "a BPB with $bpb is not mounted" "Disk I/O" "$out"
 		done
 		# ERA of a file whose first cluster is free already frees
@@ -767,11 +768,11 @@ open(sys.argv[1], 'wb').write(b)
 EOF
 		rm -f $T/out/ln.img
 		out=$($EMU -a $T/wf.imd -h $T/ln.img -w h:$T/out/ln.img -T -t 120 \
-			-e 'A:\>|C:\>|C:\F>' -k 'c:\rfree\rera db.txt\rfree\rera along*.txt\rrd longfold\rfree\rcd f\rcd ..x\r' |
+			-e 'A:\>|E:\>|E:\F>' -k 'e:\rfree\rera db.txt\rfree\rera along*.txt\rrd longfold\rfree\rcd f\rcd ..x\r' |
 			tr -d '\r' | grep -v '^$' | tr '\n' '|')
-		check "ERA of a file on a free cluster frees no more" "C: 960K free|C:\\>era db.txt|C:\\>free|C: 960K free" "$out"
-		check "and the others free theirs" "C: 964K free" "$out"
-		check "CD ..X is a bad name" "C:\\F>cd ..x|Bad name|C:\\F>" "$out"
+		check "ERA of a file on a free cluster frees no more" "E: 960K free|E:\\>era db.txt|E:\\>free|E: 960K free" "$out"
+		check "and the others free theirs" "E: 964K free" "$out"
+		check "CD ..X is a bad name" "E:\\F>cd ..x|Bad name|E:\\F>" "$out"
 		n=$(python3 - $T/out/ln.img <<'EOF'
 import sys, struct
 b = open(sys.argv[1], 'rb').read()
@@ -786,8 +787,8 @@ EOF
 		python3 $T/dmg.py $T/rf.img bpb 0x11 1000
 		for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14; do mmd -i $T/rf.img ::D$i; done
 		out=$($EMU -a $T/wf.imd -h $T/rf.img -T -t 60 -e 'A:\>' \
-			-k 'md c:x\rmd c:y\r' | tr -d '\r' | grep -v '^$' | tr '\n' '|')
-		check "MD in a full root says so" "md c:y|Root full" "$out"
+			-k 'md e:x\rmd e:y\r' | tr -d '\r' | grep -v '^$' | tr '\n' '|')
+		check "MD in a full root says so" "md e:y|Root full" "$out"
 		# The page module on the host, page.c and page.s on the
 		# Z80 core: down and up, jumps, 3000 random edits and saves
 		# checked against a model, and a file of LF lines saved as it was
@@ -886,7 +887,7 @@ EOF
 		printf 'one two three\nfour five six\nseven eight nine\nten eleven twelve\n' >$T/VI.TXT
 		mkdisk $T/vi.imd $C/CLIB.SYS $C/VI.COM $T/VI.TXT >/dev/null
 		out=$(python3 tools/session.py "-a $T/vi.imd -w a:$T/out/vi.imd" \
-			'vi vi.txt\r' @40 'w' 'x' 'j' 'iA\x1b' '$' 'aB\x1b' '0' 'k' 'l' 'l' \
+			'\x1bOPvi vi.txt\r' '@/characters' 'w' 'x' 'j' 'iA\x1b' '$' 'aB\x1b' '0' 'k' 'l' 'l' \
 			'x' '\x1b[B' '\x1b[C' 'x' '\x1b[D' '\x1b[A' 'iC\x1b' 'G' 'dd' '1G' \
 			'p' 'oNEW\x1b' 'u' '/e.g\r' 'x' ':w\r' @20)
 		check "VI shows the text, edited" "fouA five sixB" "$out"
@@ -896,29 +897,31 @@ EOF
 			printf '%062d' 0 | tr 0 '\032'; } >$T/VI.OK
 		same "and the file has the moves, insert, delete, put, undo and search" \
 			$T/VI.OK $T/out/VI.TXT
-		out=$(python3 tools/session.py "-a $T/vi.imd" 'vi vi.txt\r' @40 ':q\r' @20 \
+		out=$(python3 tools/session.py "-a $T/vi.imd" '\x1bOPvi vi.txt\r' '@/characters' ':q\r' @20 \
 			'dir vi.txt\r' @10)
 		check "VI quits on :q with no change" "A: VI       TXT" "$out"
-		out=$(python3 tools/session.py "-a $T/vi.imd" 'vi vi.txt\r' @40 'x' ':q\r' @20)
+		out=$(python3 tools/session.py "-a $T/vi.imd" '\x1bOPvi vi.txt\r' '@/characters' 'x' ':q\r' @20)
 		check "and on a change refuses" "No write since last change (use ! to override)" "$out"
 		out=$(python3 tools/session.py "-a $T/vi.imd -w a:$T/out/vi2.imd" \
-			'vi vi.txt\r' @40 'x' ':q!\r' @20 'dir vi.txt\r' @10)
+			'\x1bOPvi vi.txt\r' '@/characters' 'x' ':q!\r' @20 'dir vi.txt\r' @10)
 		check "and :q! quits all the same" "A: VI       TXT" "$out"
 		getfile $T/out/vi2.imd VI.TXT $T/out/VI2.TXT
 		same "without writing the file" $T/VI.TXT $T/out/VI2.TXT
-		# Caps Lock, on at boot, is off in VI and back on after: keys
-		# typed as a person types them, with no -K. x deletes the first
-		# letter where X did nothing, :wq saves where :WQ was refused
-		out=$($MAXEMU -a $T/vi.imd -w a:$T/out/vi3.imd -T -t 60 -e 'A:\>' \
-			-k 'vi vi.txt\E\P\P\P\P\P\Px\P:wq\rdir vi.txt\r' | tr -d '\r')
-		check "VI takes its commands with Caps Lock on at the prompt" "A:\\>DIR VI.TXT" "$out"
+		# Caps Lock, on at boot, stays on in VI, whose command keys
+		# come back to their case: keys typed as a person types
+		# them, with no -K. x deletes a letter, iab types AB, F1 turns
+		# Caps Lock off and jx still deletes, F1 on again and :WQ saves
+		out=$($MAXEMU -a $T/vi.imd -w a:$T/out/vi3.imd -T -t 90 -e 'A:\>' \
+			-k 'vi vi.txt\E\P\P\P\P\P\Pxiab\e\P\P\1jx\P\1\P:wq\rdir vi.txt\r' | tr -d '\r')
+		check "VI takes its commands with Caps Lock on" "A:\\>DIR VI.TXT" "$out"
 		getfile $T/out/vi3.imd VI.TXT $T/out/VI3.TXT
-		check "and x and :wq in lower case" "=ne two three" "=$(head -1 $T/out/VI3.TXT)"
+		check "and x deletes, i types in capitals" "=ABne two three" "=$(sed -n 1p $T/out/VI3.TXT)"
+		check "and with Caps Lock off x is still x" "=fur five six" "=$(sed -n 2p $T/out/VI3.TXT)"
 		# Counts on e, so c2w too, which runs as c2e, and ` as vi's
 		# exclusive motion: c2w on line 1, 3e then x on line 2,
 		# a mark on line 3's second word and d`b from the line's start
 		out=$(python3 tools/session.py "-a $T/vi.imd -w a:$T/out/vi5.imd" \
-			'vi vi.txt\r' @40 'c2wZ\x1b' @5 'j03ex' @5 'j0wmb0d`b' @5 ':wq\r' @20)
+			'\x1bOPvi vi.txt\r' '@/characters' 'c2wZ\x1b' @5 'j03ex' @5 'j0wmb0d`b' @5 ':wq\r' @20)
 		getfile $T/out/vi5.imd VI.TXT $T/out/VI5.TXT
 		check "VI: c2w changes two words" "=Z three" "=$(sed -n 1p $T/out/VI5.TXT | tr -d '\r')"
 		check "and 3e goes to the third word's end" "=four five si" \
@@ -930,7 +933,7 @@ EOF
 		printf 'one two three four\n        five six\n    seven\nten\n' >$T/VI6.TXT
 		mkdisk $T/vi6.imd $C/CLIB.SYS $C/VI.COM $T/VI6.TXT >/dev/null
 		out=$(python3 tools/session.py "-a $T/vi6.imd -w a:$T/out/vi6.imd" \
-			'vi vi6.txt\r' @40 'd/thr\r' @5 'j<<' @5 'j<<' @5 'u' @5 \
+			'\x1bOPvi vi6.txt\r' '@/characters' 'd/thr\r' @5 'j<<' @5 'j<<' @5 'u' @5 \
 			'jxx' @5 'U' @5 ':wq\r' @20)
 		getfile $T/out/vi6.imd VI6.TXT $T/out/VI6.TXT
 		check "VI: d/pat deletes up to the match" "=three four" \
@@ -944,7 +947,7 @@ EOF
 		# The back arrow rubs out while typing and on the : line, as at
 		# A:\>: XYZ, two back, Q, then :wqx, one back
 		out=$(python3 tools/session.py "-a $T/vi.imd -w a:$T/out/vi3.imd" \
-			'vi vi.txt\r' @40 'iXYZ' '\x1b[D' '\x1b[D' 'Q\x1b' ':wqx' '\x1b[D' '\r' @20 \
+			'\x1bOPvi vi.txt\r' '@/characters' 'iXYZ' '\x1b[D' '\x1b[D' 'Q\x1b' ':wqx' '\x1b[D' '\r' @20 \
 			'dir vi.txt\r' @10)
 		check "VI: the back arrow rubs out on the : line" "A: VI       TXT" "$out"
 		getfile $T/out/vi3.imd VI.TXT $T/out/VI3.TXT
@@ -958,17 +961,17 @@ EOF
 		mkdisk $T/vk.imd $C/CLIB.SYS $C/VI.COM $C/EMACS.COM $T/NOTES.BAK $T/VI.TXT \
 			$T/FD.TXT >/dev/null
 		out=$(python3 tools/session.py "-a $T/vk.imd -w a:$T/out/vk.imd" \
-			'vi notes.bak\r' @40 'x' ':w\r' @20 ':q\r' @20 'dir notes.*\r' @10)
+			'\x1bOPvi notes.bak\r' '@/characters' 'x' ':w\r' @20 ':q\r' @20 'dir notes.*\r' @10)
 		check "VI saves a .BAK in place" "A: NOTES    BAK" "$out"
 		getfile $T/out/vk.imd NOTES.BAK $T/out/NOTES.BAK
 		check "with the change" "=ne=" "=$(head -1 $T/out/NOTES.BAK | tr -d '\r')="
-		out=$(python3 tools/session.py "-a $T/vk.imd -R a" 'vi vi.txt\r' @40 'x' ':w\r' @20)
+		out=$(python3 tools/session.py "-a $T/vk.imd -R a" '\x1bOPvi vi.txt\r' '@/characters' 'x' ':w\r' @20)
 		check "VI on a write-protected disk says so itself" "Write error, the file is as it was" "$out"
 		check "and goes on, no warm boot" "=0=" "=$(printf '%s\n' "$out" | grep -c 'CP/M Error')="
 		out=$(python3 tools/session.py "-a $T/vk.imd -R a" \
-			'vi vi.txt\r' @40 'x' ':w\r' @20 ':q!\r' @20 'dir vi.txt\r' @10)
+			'\x1bOPvi vi.txt\r' '@/characters' 'x' ':w\r' @20 ':q!\r' @20 'dir vi.txt\r' @10)
 		check "and quits to the shell" "A: VI       TXT" "$out"
-		out=$(python3 tools/session.py "-a $T/vk.imd" 'vi vi.txt\r' @40 \
+		out=$(python3 tools/session.py "-a $T/vk.imd" '\x1bOPvi vi.txt\r' '@/characters' \
 			":$(printf 'x%.0s' $(seq 100))" @20 '\x1b' @20 ':q\r' '@?A:\>' 'dir vi.txt\r' '@/VI       TXT')
 		check "VI cuts a : line of 100 keys and goes on" "A: VI       TXT" "$out"
 		out=$(python3 tools/session.py "-a $T/vk.imd" 'emacs fd.txt\r' @40)
@@ -984,12 +987,12 @@ EOF
 		awk 'BEGIN { for (i = 0; i < 1000; i++)
 			printf "Line %04d of the big file, some words to fill it out.\r\n", i }' >$T/VIBIG.TXT
 		mkdisk $T/vib.imd $C/CLIB.SYS $C/VI.COM $T/VIBIG.TXT >/dev/null
-		out=$(python3 tools/session.py "-a $T/vib.imd" 'vi vibig.txt\r' '@/the rest paged from disk' 'G' @200 \
+		out=$(python3 tools/session.py "-a $T/vib.imd" '\x1bOPvi vibig.txt\r' '@/the rest paged from disk' 'G' @200 \
 			'\x07' @10)
 		check "VI pages a big file, and goes to its end" "ine 0999 of the big file" "$out"
 		check "and counts its lines" '"VIBIG.TXT" line 1000 of 1000 -- 100 % --' "$out"
 		out=$(python3 tools/session.py "-a $T/vib.imd -w a:$T/out/vib1.imd" \
-			'vi vibig.txt\r' '@/the rest paged from disk' 'G' @200 '1G' @200 '\x07' @10)
+			'\x1bOPvi vibig.txt\r' '@/the rest paged from disk' 'G' @200 '1G' @200 '\x07' @10)
 		check "and back" '"VIBIG.TXT" line 1 of 1000 -- 0 % --' "$out"
 		python3 $MAX80/tools/imd2raw.py $T/out/vib1.imd $T/out/vib1.img >/dev/null
 		out=$(mdir -i $T/out/vib1.img :: 2>&1)
@@ -999,18 +1002,18 @@ EOF
 		*) echo "ok   and makes no work file" ;;
 		esac
 		out=$(python3 tools/session.py "-a $T/vib.imd -w a:$T/out/vib2.imd" \
-			'vi vibig.txt\r' '@/the rest paged from disk' 'jA X\x1b' 'G' @200)
+			'\x1bOPvi vibig.txt\r' '@/the rest paged from disk' 'jA X\x1b' 'G' @200)
 		python3 $MAX80/tools/imd2raw.py $T/out/vib2.imd $T/out/vib2.img >/dev/null
 		out=$(mdir -i $T/out/vib2.img :: 2>&1)
 		check "a change the window leaves goes to the work file" 'VIBIG    $$W' "$out"
-		out=$(python3 tools/session.py "-a $T/vib.imd" 'vi vibig.txt\r' '@/the rest paged from disk' \
+		out=$(python3 tools/session.py "-a $T/vib.imd" '\x1bOPvi vibig.txt\r' '@/the rest paged from disk' \
 			'/Line 0900\r' '@/ine 0900 of the big' '\x07' @10)
 		check "a search finds text far below the window" '"VIBIG.TXT" line 901 of 1000' "$out"
-		out=$(python3 tools/session.py "-a $T/vib.imd" 'vi vibig.txt\r' '@/the rest paged from disk' \
+		out=$(python3 tools/session.py "-a $T/vib.imd" '\x1bOPvi vibig.txt\r' '@/the rest paged from disk' \
 			':700\r' @200 '\x07' @10)
 		check ":N goes to a line far below" '"VIBIG.TXT" line 700 of 1000' "$out"
 		out=$(python3 tools/session.py "-a $T/vib.imd -w a:$T/out/vib3.imd" \
-			'vi vibig.txt\r' '@/the rest paged from disk' '3G' 'dd' 'G' @200 'u' @200 ':w\r' '@/"VIBIG.TXT" 1000 lines')
+			'\x1bOPvi vibig.txt\r' '@/the rest paged from disk' '3G' 'dd' 'G' @200 'u' @200 ':w\r' '@/"VIBIG.TXT" 1000 lines')
 		check "undo works after the window moved" '"VIBIG.TXT" 1000 lines' "$out"
 		getfile $T/out/vib3.imd VIBIG.TXT $T/out/VIBIG3.TXT
 		cp $T/VIBIG.TXT $T/VIBIG3.OK
@@ -1029,27 +1032,27 @@ EOF
 		mkdisk $T/vie.imd $C/CLIB.SYS $C/VI.COM $T/VIBIG.TXT $T/VIMED.TXT \
 			$T/VIOTH.TXT $T/VISML.TXT >/dev/null
 		out=$(python3 tools/session.py "-a $T/vie.imd -w a:$T/out/vie1.imd" \
-			'vi vibig.txt\r' '@/the rest paged from disk' '500G' @300 ':r vimed.txt\r' @400 ':w\r' '@/"VIBIG.TXT" 1030 lines')
+			'\x1bOPvi vibig.txt\r' '@/the rest paged from disk' '500G' @300 ':r vimed.txt\r' @400 ':w\r' '@/"VIBIG.TXT" 1030 lines')
 		check ":r reads a file into a paged one" '"VIBIG.TXT" 1030 lines' "$out"
 		getfile $T/out/vie1.imd VIBIG.TXT $T/out/VIBIGR.TXT
 		{ head -n 500 $T/VIBIG.TXT; cat $T/VIMED.TXT; tail -n 500 $T/VIBIG.TXT; } >$T/VIBIGR.OK
 		n=$(wc -c <$T/VIBIGR.OK)
 		printf '%0*d' $(( (128 - n % 128) % 128 )) 0 | tr 0 '\032' >>$T/VIBIGR.OK
 		same "and saves it in its place" $T/VIBIGR.OK $T/out/VIBIGR.TXT
-		out=$(python3 tools/session.py "-a $T/vie.imd" 'vi vibig.txt\r' '@/the rest paged from disk' \
+		out=$(python3 tools/session.py "-a $T/vie.imd" '\x1bOPvi vibig.txt\r' '@/the rest paged from disk' \
 			'3G' ':r vioth.txt\r' @300)
 		check ":r of a big file into a paged one is refused" '"vioth.txt" Out of memory, not read' "$out"
-		out=$(python3 tools/session.py "-a $T/vie.imd" 'vi vibig.txt\r' '@/the rest paged from disk' \
+		out=$(python3 tools/session.py "-a $T/vie.imd" '\x1bOPvi vibig.txt\r' '@/the rest paged from disk' \
 			'3G' ':r vioth.txt\r' @300 '\x07' @10)
 		check "and leaves the text unchanged" '"VIBIG.TXT" line 3 of 1000 -- 0 % --' "$out"
-		out=$(python3 tools/session.py "-a $T/vie.imd" 'vi visml.txt\r' '@/small three' \
+		out=$(python3 tools/session.py "-a $T/vie.imd" '\x1bOPvi visml.txt\r' '@/small three' \
 			':r vibig.txt\r' '@/Out of memory, not read')
 		check ":r of a big file into a small one is refused" '"vibig.txt" Out of memory, not read' "$out"
-		out=$(python3 tools/session.py "-a $T/vie.imd" 'vi visml.txt\r' '@/small three' \
+		out=$(python3 tools/session.py "-a $T/vie.imd" '\x1bOPvi visml.txt\r' '@/small three' \
 			':r vibig.txt\r' '@/Out of memory, not read' '\x07' @10)
 		check "and leaves it unchanged" '"VISML.TXT" line 1 of 3 -- 33 % --' "$out"
 		out=$(python3 tools/session.py "-a $T/vie.imd -w a:$T/out/vie2.imd" \
-			'vi vibig.txt\r' '@/the rest paged from disk' 'jA X\x1b' 'G' @200 ':e! visml.txt\r' @100 '\x07' @10)
+			'\x1bOPvi vibig.txt\r' '@/the rest paged from disk' 'jA X\x1b' 'G' @200 ':e! visml.txt\r' @100 '\x07' @10)
 		check ":e! leaves a changed paged file for a small one" '"visml.txt" line 1 of 3' "$out"
 		python3 $MAX80/tools/imd2raw.py $T/out/vie2.imd $T/out/vie2.img >/dev/null
 		out=$(mdir -i $T/out/vie2.img :: 2>&1)
@@ -1058,20 +1061,20 @@ EOF
 		*'$$W'*) echo "FAIL and its work file goes:"; printf '%s\n' "$out"; fail=1 ;;
 		*) echo "ok   and its work file goes" ;;
 		esac
-		out=$(python3 tools/session.py "-a $T/vie.imd" 'vi vibig.txt\r' '@/the rest paged from disk' \
+		out=$(python3 tools/session.py "-a $T/vie.imd" '\x1bOPvi vibig.txt\r' '@/the rest paged from disk' \
 			':e vioth.txt\r' @100 'G' @200 '\x07' @10)
 		check ":e goes from a paged file to another" '"vioth.txt" line 800 of 800' "$out"
-		out=$(python3 tools/session.py "-a $T/vie.imd" 'vi visml.txt\r' '@/small three' \
+		out=$(python3 tools/session.py "-a $T/vie.imd" '\x1bOPvi visml.txt\r' '@/small three' \
 			':e vibig.txt\r' '@/the rest paged from disk' 'G' '@/ine 0999 of the big' '\x07' @10)
 		check ":e goes from a small file to a paged one" '"vibig.txt" line 1000 of 1000' "$out"
-		out=$(python3 tools/session.py "-a $T/vib.imd" 'vi vibig.txt\r' '@/the rest paged from disk' \
+		out=$(python3 tools/session.py "-a $T/vib.imd" '\x1bOPvi vibig.txt\r' '@/the rest paged from disk' \
 			':1,$d\r' @100)
 		check "a range bigger than the window is refused" "Range bigger than the window" "$out"
-		out=$(python3 tools/session.py "-a $T/vib.imd" 'vi vibig.txt\r' '@/the rest paged from disk' \
+		out=$(python3 tools/session.py "-a $T/vib.imd" '\x1bOPvi vibig.txt\r' '@/the rest paged from disk' \
 			'dG' @100)
 		check "and so is a motion past it" "Range bigger than the window" "$out"
 		out=$(python3 tools/session.py "-a $T/vib.imd -w a:$T/out/vib4.imd" \
-			'vi vibig.txt\r' '@/the rest paged from disk' 'jj' 'A TOP\x1b' ':5,6s/Line/Row/\r' @50 \
+			'\x1bOPvi vibig.txt\r' '@/the rest paged from disk' 'jj' 'A TOP\x1b' ':5,6s/Line/Row/\r' @50 \
 			':500\r' @200 'A MID\x1b' 'G' @200 'A END\x1b' @50 ':set bk\r' @20 ':w\r' '@/"VIBIG.TXT" 1000 lines')
 		check "edits at the top, middle and end are saved" '"VIBIG.TXT" 1000 lines' "$out"
 		getfile $T/out/vib4.imd VIBIG.TXT $T/out/VIBIG.TXT
@@ -1105,7 +1108,7 @@ EOF
 		out=$(python3 tools/session.py "-D 1 -a build/apps_525.imd" @10 'clock\r' @20)
 		check "the 5.25-inch apps disk loads CLIB.SYS" "C library loaded" "$out"
 		check "and runs CLOCK" "$(date +%m/%d/%y) " "$out"
-		out=$(python3 tools/session.py "-D 1 -a build/apps_525.imd" '@?A:\>' 'vi x.txt\r' '@/[New File]')
+		out=$(python3 tools/session.py "-D 1 -a build/apps_525.imd" '@?A:\>' '\x1bOPvi x.txt\r' '@/[New File]')
 		check "and VI" '"X.TXT" [New File]' "$out"
 	else
 		echo "skip the C programs: no SDCC in ${SDCC_BIN:-/opt/cross/sdcc-4.6.0/bin}, or none in $CDIR"
@@ -1473,7 +1476,7 @@ check "DIR shows a folder as NAME\\" "A: M        COM : OLD\\" "$out"
 check "LS shows <DIR>" "OLD\\         <DIR>" "$out"
 out=$($EMU -a $T/out/fd1.imd -t 60 -e 'A:\>|A:\GAMES>' -w a:$T/o2/fd.imd \
 	-k 'cd games\rcopy \\clock.com c.com\rcd \\\rdir\rtype games\\nothere.txt\rcd nothere\rmd games\rmd x*\rrd games\r')
-check "the root's DIR shows the folder" "A: GAMES\\" "$out"
+check "the root's DIR shows the folder" "SYS      COM : GAMES\\" "$out"
 check "a path to no file" "No file" "$out"
 check "CD to no folder" "No folder" "$out"
 check "MD of a name taken" "Exists" "$out"
@@ -1493,11 +1496,21 @@ check "the folder stays through the warm boots" 'A:\GAMES>clock' "$out"
 out=$($EMU -a $T/o2/fd.imd -t 30 -e 'A:\>' -k 'save 1 games\rren games=more.com\rdir\r')
 check "SAVE to a folder's name makes no file" "No file" "$out"
 check "nor does REN" "No file, or the new name is taken" "$out"
-check "and the folder is still alone" "A: GAMES\\" "$out"
+check "and the folder is still alone" "SYS      COM : GAMES\\" "$out"
 out=$($EMU -a $T/o2/fd.imd -t 30 -e 'A:\>|A:\GAMES>' \
 	-k 'copy clock.com games\rcopy *.fnt \\games\rcd games\rdir\r')
 check "COPY to a folder's name puts the file in it" "A: M        COM : OLD\\         : C        COM : CLOCK    COM" "$out"
 check "and wildcards to one" "A: XCPM     FNT : THIN     FNT : INVERSE  FNT" "$out"
+# A command named by a path: \CLOCK, ..\C and \GAMES\C from
+# GAMES\OLD, a missing program and a missing folder, and GAMES\M run
+# from the root reads the root, not the folder it came from
+out=$($EMU -a $T/o2/fd.imd -t 40 -e 'A:\>|A:\GAMES\OLD>' \
+	-k 'cd games\\old\r\\clock\r..\\c\r\\games\\c\r\\nosuch\r\\nodir\\clock\rcd \\\rgames\\m c.com\r')
+check "a command by a path runs, from the root, the folder above and down" "=3=" \
+	"=$(printf '%s\n' "$out" | grep -c '^[0-9][0-9]/[0-9][0-9]/[0-9][0-9] ')="
+check "and a missing one says so" "NOSUCH?" "$out"
+check "and a missing folder" "No folder" "$out"
+check "and the program sees the current folder, not its own" "MORE: no such file" "$out"
 
 # MV into a folder and out again moves the entry, in one folder it
 # renames, and to another drive it copies and erases
@@ -1506,8 +1519,8 @@ out=$($EMU -a "$DISK" -b $T/mvb.imd -t 60 -e 'A:\>' -w a:$T/out/mv.imd -w b:$T/o
 	-k 'md games\rmv more.com games\rmv clock.com games\\c.com\rmv games\\c.com \\\rmv glyphs.com gl.com\rmv xcpm.fnt b:x.fnt\rdir\rdir games\\\rdir b:\r')
 check "MV into a folder" "A: MORE     COM" "$out"
 check "MV in one folder renames, out of a folder to the top" "A: LDFONT   COM : GL       COM : C        COM : BENCH    COM" "$out"
-check "MV to another drive, and the source goes" "A: THIN     FNT : INVERSE  FNT : GAMES\\" "$out"
-check "and it is there" "B: X        FNT" "$out"
+check "MV to another drive, and the source goes" "A: THIN     FNT : INVERSE  FNT : FORMAT   COM" "$out"
+check "and it is there" "SYS      COM : X        FNT" "$out"
 python3 $MAX80/tools/imd2raw.py $T/out/mv.imd $T/out/mv.img >/dev/null
 fatok "the moves leave a clean FAT volume" $T/out/mv.img
 mcopy -o -i $T/out/mv.img ::GAMES/MORE.COM $T/out/MV.COM
@@ -1902,8 +1915,8 @@ fatok "and the volume is clean" $T/out/fo.img
 k='md big\rcd big\r'
 for i in $(seq 1 40); do k="${k}save 1 f$i.com\\r"; done
 out=$($EMU -a "$DISK" -t 200 -e 'A:\>|A:\BIG>|ALL (Y/N)?' -w a:$T/out/fb.imd \
-	-k "${k}rd \\\\big\\rcd ..\\rls big\\\\f4*.*\\rera big\\\\*.*\\ry\\E\\Prd big\\rdir\\r")
-check "40 files in a folder" "A:\\BIG>save 1 f40.com" "$out"
+	-k "${k}rd \\\\big\\rcd ..\\rls big\\\\f4*.*\\rera big\\\\*.*\\ry\\rrd big\\rdir\\r")
+check "40 files in a folder: F4 and F40" "2 files," "$out"
 check "RD of the current folder" "In use" "$out"
 check "LS of a path" "F40.COM      256" "$out"
 check "ERA of a path, RD, and the folder is gone" "XCPM     FNT : THIN     FNT : INVERSE  FNT" "$(printf '%s\n' "$out" | tail -3)"

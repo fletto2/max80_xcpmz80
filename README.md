@@ -1,7 +1,7 @@
 # xcpmz80
 
-A CP/M compatible OS for the Lobo MAX-80 that keeps its files on FAT12
-and FAT16 disks, so a PC can read and write them. It's written in Z80
+A CP/M compatible OS for the Lobo MAX-80 that keeps its files on FAT12,
+FAT16 and FAT32 disks, so a PC can read and write them. It's written in Z80
 assembly for this machine only. None of it is copied from Lobo's or
 Digital Research's code.
 
@@ -79,10 +79,12 @@ A floppy written by FORMAT reads the same way after lobo_max80's
   records, delete, rename, attributes.
 - `src/dir.asm`: folders: the current folder of each drive, paths, CD,
   MD and RD, and BDOS 118, 119, 124 and 125.
-- `src/fat.asm`: mounting a FAT12 or FAT16 volume, and the FAT itself.
+- `src/fat.asm`: mounting a FAT12, FAT16 or FAT32 volume, the FAT
+  itself, and FAT32's FSInfo sector.
 - `src/disk.asm`: the drive table, the FDC and SASI drivers and the
   sector cache.
-- `src/format.asm`: FORMAT and SYS.
+- `src/format.asm`: FORMAT and SYS, not part of the kernel: the body
+  of FORMAT.COM and SYS.COM.
 - `src/bpb.inc`: the floppy's BPB, the one definition of its format.
 - `src/clock.asm`: the MSM5832 clock, and FAT and CP/M 3 dates.
 - `src/util.asm`: console output, numbers, file names, wildcards.
@@ -99,13 +101,22 @@ A floppy written by FORMAT reads the same way after lobo_max80's
   `make FONT=src/font_inverse.bin`.
 - `apps/ldfont.asm`, `apps/glyphs.asm`, `apps/clock.asm`,
   `apps/more.asm`: LDFONT, GLYPHS, CLOCK and MORE.
+- `apps/format.asm`: FORMAT.COM and SYS.COM. They copy
+  `src/format.asm`, assembled against the kernel's labels, to OVLORG in
+  the TPA's common part, and BDOS function 201 runs it there with the
+  kernel mapped, only on the kernel whose stamp it carries.
 - `apps/zx81/`: ZX81.COM, which runs ZX81 machine code games.
 - `tools/mkdisk.py`: makes a boot disk, as IMD for the emulator and as
   a raw image for mtools, with files copied onto it. `--pc KB` (360,
   720 or 1440) makes a floppy in a PC's layout, sectors from 1, `--525
   KB` (180, 360 or 720) one in Lobo's layout, sectors from 0, which
   boots, `--ds` a double sided 8-inch one, `--hd
-  MB` a hard disk image for the emulator's `-h`.
+  MB` a hard disk image for the emulator's `-h`, `--fat32` with it a
+  FAT32 one, made with mtools and with no system on it, and `--mbr`
+  either in a partition behind a partition table.
+- `tools/kernsym.py`: the kernel's stamp, a CRC of the system
+  assembled with KSTAMP 0, and its labels as an include for
+  `apps/format.asm`. The Makefile assembles each system twice for it.
 - `tools/mkfont.py`: makes the fonts from `tools/unscii-8.hex`.
 - `tools/swapfont.py`: makes `BOLD.FNT`, `src/font.bin` with its two
   styles swapped, for the apps disks.

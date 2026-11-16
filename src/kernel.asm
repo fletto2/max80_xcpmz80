@@ -24,7 +24,8 @@ kmain:	ld	hl,BSS			; zero the variables
 	ld	hl,TPAK			; the TPA
 	call	pdec
 	call	pmsg
-	db	"K TPA",0Dh,0Ah,0
+	db	"K TPA",0Dh,0Ah
+	db	"Terminal: Soroc IQ-120, TeleVideo 912/920, ADM-3A",0Dh,0Ah,0
 	xor	a			; the boot device is A:
 	ld	(scb+SCB_DRV),a
 	ld	(shdrv),a
@@ -423,11 +424,13 @@ fextq:	ld	de,CFCB+9
 
 rp_1:	xor	a
 	ld	(rootf),a
+	dec	a			; a path's folder was for the command:
+	ld	(dirovd),a		; the program sees the current one
 	call	ccpent			; before the program, which may load over it
 	call	ldtell
 	ld	a,(fdrive)		; the FAT now, with the head near it, not
 	call	mount			; between the first cluster and the next
-	ld	hl,(CFCB+F_CLUS)
+	call	fclus
 	call	fatget
 	ld	a,(fdrive)		; the drive it came from, for 0050h
 	inc	a
@@ -734,6 +737,49 @@ sp_1:	inc	hl
 	jr	nz,sp_1
 	ret
 
+; Mount drive A as fdrive, or on to the shell's error
+mntsh:	ld	(fdrive),a
+	call	mount
+	ret	z
+	jp	sherr
+
+; Function 201: run FORMAT.COM's or SYS.COM's overlay, the
+; kernel's FORMAT and SYS assembled apart against this kernel's labels.
+; The program has copied it to OVLORG, where its first word is the
+; stamp of the kernel it was built for; DE is its entry. Not this
+; kernel's stamp: back to the program, which says so. Else as a warm
+; boot, then into the overlay with A2 mapped and HL at the command
+; tail, as the shell runs a built-in command.
+	ifndef	KSTAMP
+KSTAMP		equ	0		; no stamp: runs no overlay
+	endif
+f201:	ld	hl,(OVLORG)
+	ld	bc,KSTAMP
+	or	a
+	sbc	hl,bc
+	ret	nz
+	ld	(OVLORG),de		; the stamp is done with
+	ld	hl,kovl
+	jp	wb_1
+kovl:	call	kwcom
+	ld	hl,0080h		; the tail, to linebuf by way of
+	call	upeek			; common memory
+	and	7Fh			; linebuf holds 128
+	ld	c,a
+	ld	b,0
+	push	bc
+	ld	hl,0081h
+	ld	de,linebuf
+	call	ucopybig
+	pop	bc
+	ld	hl,linebuf
+	add	hl,bc
+	ld	(hl),0
+	ld	hl,(OVLORG)
+	push	hl
+	ld	hl,linebuf
+	ret
+
 ; A file call's result: on to the shell's error unless Z and A = 0
 fchk:	jr	nz,sherr
 	or	a
@@ -760,5 +806,4 @@ she_nf:	ld	hl,nofile		; DIR's
 	include	"disk.asm"
 	include	"clock.asm"
 	include	"util.asm"
-	include	"format.asm"		; FORMAT and SYS
 KERNEL_END:

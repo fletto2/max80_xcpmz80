@@ -1,10 +1,12 @@
-; xcpmz80 block layer. Runs in A2. Logical drives A: to C: are a
-; floppy drive or the SASI disk. Each is read and written in 512-byte
+; xcpmz80 block layer. Runs in A2. Logical drives A: to H: are a
+; floppy drive, the SASI disk or none: the four floppy drives, then the
+; hard disk, from a floppy, the hard disk then the floppies from it
+;. Each is read and written in 512-byte
 ; sectors by a 16-bit LBA, through a cache of four buffers. The FDC
 ; driver follows Lobo's XFDC.MAC and the SASI driver Lobo's XWINI.MAC,
 ; as behavior; the code is our own.
 
-NDRV		equ	3		; A: B: C:
+NDRV		equ	8		; A: to H:
 DT_NONE		equ	0
 DT_FLOPPY	equ	1
 DT_SASI		equ	2
@@ -22,18 +24,24 @@ D_NFATS		equ	10
 D_ROOTSEC	equ	11		; first root directory sector, 2
 D_ROOTENT	equ	13		; root entries, 2
 D_DATASEC	equ	15		; sector of cluster 2, 2
-D_MAXCL		equ	17		; highest cluster number, 2
-D_TOTAL		equ	19		; sectors, 2
+D_MAXCL		equ	17		; highest cluster number, 2, its third byte
+					; in D_MAXCLX
+D_HINTX		equ	19		; D_HINT's third byte
+D_TOTALH	equ	20		; sectors, the high byte, for a floppy
 D_SPT		equ	21		; floppy sectors per track
 D_HEADS		equ	22		; floppy heads
 D_HINT		equ	23		; where to look for a free cluster, 2
 D_RO		equ	25		; 1 read only
 D_TRK		equ	26		; floppy: the cylinder the head is on, FFh not known
-D_ROOTSECS	equ	27		; root directory sectors
+D_MAXCLX	equ	27		; D_MAXCL's third byte
 D_KIND		equ	28		; floppy: 0 not known, 1 8-inch, 2 5-inch
 D_LATCH		equ	29		; MLATCH for it: 60h 8-inch, 40h 5-inch
 D_SBASE		equ	30		; the first sector number, 0 or 1
 D_RATE		equ	31		; the step rate bits
+; FAT32, on the hard disk only, in the floppy's fields
+D_FSINFO	equ	D_TRK		; FSInfo's sector, 0 none
+D_ROOTCL	equ	D_LATCH		; the root folder's first cluster, 3
+	assert	D_SBASE == D_LATCH+1 && D_RATE == D_LATCH+2
 DSZ		equ	32
 
 ; Disk errors, in A with NZ. 1 to 4 are CP/M 3's codes, which a program
@@ -54,7 +62,7 @@ E_INUSE		equ	13		; In use, the current folder
 E_NOMEM		equ	14		; No memory, for FORMAT's track
 E_DIRFULL	equ	15		; Root full, no room for MKDIR's entry
 
-; Point IX at drive A's table entry (A = 0, 1, 2). Keeps the others.
+; Point IX at drive A's table entry (A = 0 to 7). Keeps the others.
 drvix:	push	de
 	rrca				; A * DSZ, A < 8
 	rrca
@@ -68,9 +76,11 @@ drvix:	push	de
 	assert	DSZ == 32
 
 ; Fill the drive table from the boot device, in BOOTDEV: 0 an 8-inch
-; floppy, 2 a 5-inch one, 1 SASI. The boot device is A:, the other floppy
-; and the hard disk follow. A floppy's kind is found when it is first
-; used, but for the boot floppy's.
+; floppy, 2 a 5-inch one, 1 SASI. From a floppy, A: to D: are the four
+; floppy drives (selects 1, 2, 4, 8) and E: to H: the hard disk's
+; partitions 0 to 3. From the hard disk, A: is its partition 0, B: to E:
+; the floppies and F: to H: partitions 1 to 3. A floppy's kind is
+; found when it is first used, but for the boot floppy's.
 diskinit:
 	ld	hl,drvtab
 	ld	bc,NDRV*DSZ-1
@@ -81,8 +91,7 @@ diskinit:
 	push	af
 	ld	hl,dt_sasi
 	jr	z,di2
-	inc	hl			; dt_flop
-	inc	hl
+	ld	hl,dt_flop
 di2:	ld	de,drvtab
 	ld	a,NDRV
 di3:	ldi				; D_TYPE
@@ -96,6 +105,19 @@ di3:	ldi				; D_TYPE
 	ex	de,hl
 	dec	a
 	jr	nz,di3
+	ld	ix,drvtab		; the hard disk's drives: partitions
+	ld	hl,ptab+3		; 0 to 3 in turn
+	ld	bc,NDRV*256
+di4:	ld	a,(ix+D_TYPE)
+	cp	DT_SASI
+	jr	nz,di5
+	ld	(hl),c
+	inc	c
+di5:	ld	de,DSZ
+	add	ix,de
+	ld	de,8
+	add	hl,de
+	djnz	di4
 	pop	af			; the boot floppy's kind
 	ret	z
 	srl	a
@@ -103,8 +125,11 @@ di3:	ldi				; D_TYPE
 	ld	ix,drvtab
 	jp	fdkind
 
-dt_sasi: db	DT_SASI,0
-dt_flop: db	DT_FLOPPY,1, DT_FLOPPY,2, DT_SASI,0
+dt_sasi: db	DT_SASI,0, DT_FLOPPY,1, DT_FLOPPY,2, DT_FLOPPY,4, DT_FLOPPY,8
+	db	DT_SASI,0, DT_SASI,0, DT_SASI,0
+dt_flop: db	DT_FLOPPY,1, DT_FLOPPY,2, DT_FLOPPY,4, DT_FLOPPY,8, DT_SASI,0
+	db	DT_SASI,0, DT_SASI,0, DT_SASI,0
+	assert	dt_flop-dt_sasi == NDRV*2
 
 ; ------------------------------------------------------------------
 ; Raw sector I/O. IX = drive, DE = LBA, HL = 512-byte buffer.
@@ -824,8 +849,162 @@ fw1:	djnz	fw1
 	ret
 
 ; ------------------------------------------------------------------
-; SASI: one 512-byte block a command, LBA in DE (blocks above 65535 are
-; not used). Three tries, as the controller retries itself, a quarter
+; HL = drive IX's entry in ptab. Keeps BC and DE.
+ptptr:	push	ix
+	pop	hl
+	ld	a,l
+	sub	low drvtab		; drive * DSZ, DSZ 32
+	rrca
+	rrca
+	and	38h			; drive * 8
+	add	a,low ptab
+	ld	l,a
+	ld	a,high ptab
+	adc	a,0
+	ld	h,a
+	ret
+
+; Find drive IX's partition on the hard disk. Block 0 with a BPB,
+; after a jump (18h, EBh or E9h), is a disk with no table: the first partition is all of it. Block 0
+; ending 55h AAh is a table: the entry for this drive's number, a FAT12,
+; FAT16 or FAT32 one (type 01h, 04h, 06h, 0Eh, 0Bh, 0Ch), its first block under
+; 1F0000h so that a volume's 65536 sectors stay under the 21 bits of
+; the SASI command. Neither, a blank disk: the first is all of it, for
+; FORMAT, not found. Z, or NZ with A = E_BADDRV for a partition that
+; is not there, or the read's error. Selects the drive again: the cache
+; is forgotten, its sectors read from another first block.
+pfind:	call	ptptr
+	ld	b,3
+	xor	a
+pf_0:	ld	(hl),a			; read block 0 itself
+	inc	hl
+	djnz	pf_0
+	inc	hl			; past the number
+	ld	(hl),0FFh		; the size: what a volume can have
+	inc	hl
+	ld	(hl),0FFh
+	inc	hl
+	ld	(hl),a
+	inc	hl
+	ld	(hl),a			; not found
+	call	pfsel
+	ld	de,0
+	xor	a
+	ld	(lbax),a
+	call	getsec
+	ret	nz
+	ex	de,hl			; DE = block 0
+	call	ptptr
+	push	hl
+	pop	iy			; IY = the entry
+	ld	a,(de)			; a jump, then 512 bytes a sector: a BPB.
+	cp	18h			; Our boot sectors' JR (they end 55h
+	jr	z,pf_b			; AAh as well), a PC's JMP
+	cp	0EBh
+	jr	z,pf_b
+	cp	0E9h
+	jr	nz,pf_t
+pf_b:	ld	hl,0Bh
+	add	hl,de
+	ld	a,(hl)
+	or	a
+	jr	nz,pf_t
+	inc	hl
+	ld	a,(hl)
+	cp	2
+	jr	nz,pf_t
+	ld	a,(iy+3)		; no table: only the first
+	or	a
+	jp	nz,pf_no
+	ld	(iy+6),1Fh		; and its size the disk's
+pf_ok:	ld	(iy+7),1
+	xor	a
+	ret
+pf_t:	ld	hl,1FEh
+	add	hl,de
+	ld	a,(hl)
+	cp	55h
+	jr	nz,pf_x
+	inc	hl
+	ld	a,(hl)
+	cp	0AAh
+	jr	nz,pf_x
+	ld	a,(iy+3)		; the entry, 1BEh + 16 n
+	add	a,a
+	add	a,a
+	add	a,a
+	add	a,a
+	add	a,0BEh
+	ld	l,a
+	ld	a,1
+	adc	a,0
+	ld	h,a
+	add	hl,de
+	ld	bc,4
+	add	hl,bc
+	ld	a,(hl)			; its type
+	cp	01h
+	jr	z,pf_f
+	cp	04h
+	jr	z,pf_f
+	cp	06h
+	jr	z,pf_f
+	cp	0Bh			; FAT32
+	jr	z,pf_f
+	cp	0Ch
+	jr	z,pf_f
+	cp	0Eh
+	jr	nz,pf_no
+pf_f:	add	hl,bc			; its first block
+	ld	a,(hl)
+	ld	(iy+0),a
+	inc	hl
+	ld	a,(hl)
+	ld	(iy+1),a
+	inc	hl
+	ld	a,(hl)
+	ld	(iy+2),a
+	cp	1Fh
+	jr	nc,pf_no
+	inc	hl
+	ld	a,(hl)
+	or	a
+	jr	nz,pf_no
+	inc	hl			; its size, at most FFFFFFh
+	ld	a,(hl)
+	ld	(iy+4),a
+	inc	hl
+	ld	a,(hl)
+	ld	(iy+5),a
+	inc	hl
+	ld	a,(hl)
+	ld	(iy+6),a
+	inc	hl
+	ld	a,(hl)
+	or	a
+	jr	z,pf_s
+	ld	(iy+4),0FFh
+	ld	(iy+5),0FFh
+	ld	(iy+6),0FFh
+pf_s:	ld	a,(iy+0)		; from block 0 is no partition
+	or	(iy+1)
+	or	(iy+2)
+	jr	z,pf_no
+	call	pfsel			; block 0 was read from block 0
+	jp	pf_ok
+pf_x:	ld	a,(iy+3)		; a blank disk: the first, for FORMAT
+	or	a
+	ret	z
+pf_no:	ld	a,E_BADDRV
+	or	a
+	ret
+pfsel:	ld	a,(drvnum)		; the cache forgotten, IX again
+	call	bforget
+	ld	a,(drvnum)
+	jp	seldrv
+
+; SASI: one 512-byte block a command, LBA in DE from the drive's
+; partition's first block (ptab), 21 bits in all. Three tries, as the controller retries itself, a quarter
 ; second apart for a drive that says it is busy. Every wait for the
 ; drive gives up after about 5 s (sasto): the bus is reset and the call
 ; returns Disk I/O, not a hang. The waits are in common.asm.
@@ -833,19 +1012,36 @@ sasrw:	push	bc
 	push	de
 	push	hl
 	ld	(sassp),sp
+	call	ptptr			; the block on the disk
+	ld	a,(hl)
+	add	a,e
+	ld	(sblk),a
+	inc	hl
+	ld	a,(hl)
+	adc	a,d
+	ld	(sblk+1),a
+	inc	hl
+	ld	a,(lbax)
+	ld	c,a
+	ld	a,(hl)
+	adc	a,c
+	ld	(sblk+2),a
+	cp	20h			; past the command's 21 bits: Disk I/O,
+	jp	nc,rwerr		; not the LUN bits
 	ld	a,3
 	ld	(fdtries),a
 sr0:	call	sassel
-	jr	nz,srnr
+	jp	nz,srnr
 	ld	a,(rwflag)		; 08h read, 0Ah write
 	add	a,a
 	add	a,8
 	call	sasout
-	ld	a,(ix+D_UNIT)		; LUN, block bits 20-16
+	ld	a,(sblk+2)		; LUN, block bits 20-16
+	or	(ix+D_UNIT)
 	call	sasout
-	ld	a,d
+	ld	a,(sblk+1)
 	call	sasout
-	ld	a,e
+	ld	a,(sblk)
 	call	sasout
 	ld	a,1			; one block
 	call	sasout
@@ -893,7 +1089,7 @@ srst1:	call	sasack
 	jp	z,rwerr			; Disk I/O
 	ld	a,250			; busy, or not ready yet: a pause
 	call	msdelay
-	jr	sr0
+	jp	sr0
 srnr:	ld	a,E_BADDRV		; nothing answers the select
 	jp	fdfail
 
@@ -980,15 +1176,17 @@ dv3:	djnz	dv1
 
 ; ------------------------------------------------------------------
 ; The cache. Four 512-byte buffers, write back, least recently used
-; first out. A header is drive (FFh empty), LBA, dirty, age.
+; first out. A header is drive (FFh empty), LBA, dirty, age, and the
+; LBA's third byte (lbax).
 NBUF		equ	4
 BH_DRV		equ	0
 BH_LBA		equ	1
 BH_DIRTY	equ	3
 BH_AGE		equ	4
-BHSZ		equ	5
+BH_LBAX		equ	5
+BHSZ		equ	6
 
-; Get sector DE of drive IX into the cache. HL = its data, IY = its
+; Get sector (lbax, DE) of drive IX into the cache. HL = its data, IY = its
 ; header. Z on success, else NZ and A = error. Keeps DE.
 ; newsec is the same, but the sector will be overwritten whole: no read.
 newsec:	push	bc
@@ -1006,6 +1204,8 @@ gs0:	call	bfind
 	ld	(iy+BH_DRV),a
 	ld	(iy+BH_LBA),e
 	ld	(iy+BH_LBA+1),d
+	ld	a,(lbax)
+	ld	(iy+BH_LBAX),a
 	ld	(iy+BH_DIRTY),0
 	dec	c
 	jr	z,gs3			; newsec
@@ -1407,33 +1607,28 @@ tbwr:	call	tbfind
 bdirty:	ld	(iy+BH_DIRTY),1
 	ret
 
-; IY = the header holding (drvnum, DE), Z if found. Uses HL.
-bfind:	ld	hl,bufhdr
+; IY = the header holding (drvnum, lbax, DE), Z if found
+bfind:	ld	iy,bufhdr
 	ld	b,NBUF
 bf1:	ld	a,(drvnum)
-	cp	(hl)			; BH_DRV
-	inc	hl
+	cp	(iy+BH_DRV)
 	jr	nz,bf2
 	ld	a,e
-	cp	(hl)			; BH_LBA
+	cp	(iy+BH_LBA)
 	jr	nz,bf2
-	inc	hl
 	ld	a,d
-	cp	(hl)
-	dec	hl
-	jr	z,bf3
-bf2:	inc	hl			; HL = header + 1 here
-	inc	hl
-	inc	hl
-	inc	hl
+	cp	(iy+BH_LBA+1)
+	jr	nz,bf2
+	ld	a,(lbax)
+	cp	(iy+BH_LBAX)
+	ret	z
+bf2:	push	de
+	ld	de,BHSZ
+	add	iy,de
+	pop	de
 	djnz	bf1
 	or	1
 	ret
-bf3:	dec	hl
-	push	hl
-	pop	iy
-	ret
-	assert	BHSZ == 5 && BH_LBA == 1
 
 ; Make IY the newest: age every other used buffer. Keeps DE.
 btouch:	push	de
@@ -1454,7 +1649,7 @@ bt2:	add	hl,de
 bdata:	push	iy
 	pop	hl
 	ld	a,l
-	sub	low bufhdr		; header offset = 5 * n
+	sub	low bufhdr		; header offset = BHSZ * n
 	ld	hl,bufdat-512
 bd1:	inc	h			; + 512
 	inc	h
@@ -1496,13 +1691,20 @@ bflush1: ld	a,(iy+BH_DIRTY)
 	push	de
 	push	hl
 	push	ix
+	ld	a,(lbax)		; the caller's, put back at the end
+	push	af
 	ld	a,(iy+BH_DRV)
 	call	drvix
 	ld	e,(iy+BH_LBA)
 	ld	d,(iy+BH_LBA+1)
+	ld	a,(iy+BH_LBAX)
+	ld	(lbax),a
 	call	bdata
 	call	wrsec			; DE = LBA, HL = data
 	jr	nz,bfl3
+	ld	a,(lbax)		; the FATs are below 65536
+	or	a
+	jr	nz,bfl2
 	push	hl			; a sector of the first FAT?
 	push	de
 	ex	de,hl
@@ -1539,7 +1741,12 @@ bfl3:	push	af			; the write failed: what this drive's
 	dec	a			; the error names this drive, not the
 	call	bdrop			; one the call was for
 	pop	af
-bfl4:	pop	ix			; the disk is read again as it is
+bfl4:	ld	c,a			; Z or NZ again from A
+	pop	af
+	ld	(lbax),a
+	ld	a,c
+	or	a
+	pop	ix			; the disk is read again as it is
 	pop	hl
 	pop	de
 	pop	bc

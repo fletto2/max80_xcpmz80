@@ -9,12 +9,15 @@ F_S1		equ	13
 F_S2		equ	14
 F_RC		equ	15
 F_MAGIC		equ	16		; FAh when we opened it
-F_DRIVE		equ	17		; the drive it is on, 0-2
-F_CLUS		equ	18		; first cluster, 2 bytes
+F_DRIVE		equ	17		; the drive it is on, 0-7, and in bits 7-3
+					; F_DSEC's third byte
+F_CLUS		equ	18		; first cluster, 2 bytes, its third byte
+					; in F_FLAG bits 7-4
 F_SIZE		equ	20		; bytes, 4 (3 used)
 F_DSEC		equ	24		; directory sector, 2
-F_DIDX		equ	26		; entry in that sector, 0-15
-F_CCL		equ	27		; a cluster of the chain, 2
+F_DIDX		equ	26		; entry in that sector, 0-15, in bits 3-0
+F_CCL		equ	27		; a cluster of the chain, 2, its third
+					; byte in F_DIDX bits 7-4
 F_CORD		equ	29		; its place in the chain, 2
 F_FLAG		equ	31		; bit 0: size or first cluster changed
 F_CR		equ	32
@@ -23,6 +26,7 @@ MAGIC		equ	0FAh
 
 ; FAT directory entry
 DE_ATTR		equ	11
+DE_CLHI		equ	20		; FAT32: the first cluster's high word
 DE_TIME		equ	22
 DE_DATE		equ	24
 DE_CLUS		equ	26
@@ -50,6 +54,7 @@ fd_1:	dec	a
 
 ; Mount the drive of the open FCB (F_DRIVE), as fcbdrv
 fcbmnt:	ld	a,(CFCB+F_DRIVE)
+	and	7
 	inc	a
 	jr	fd_1
 
@@ -101,9 +106,15 @@ ds_end:	ld	a,R_NOFILE
 ; HL = address of entry HL of folder dircl in the cache. NZ, A =
 ; R_NOFILE past the last entry, or A = error. dsec, didx are its sector
 ; and index.
-dirent:	ld	a,(dircl)
+dirent:	ld	a,(ix+D_FAT16)		; FAT32's root is a chain too
+	cp	2
+	jp	z,dsub
+	ld	a,(dircl)
 	ld	b,a
 	ld	a,(dircl+1)
+	or	b
+	ld	b,a
+	ld	a,(dircl+2)
 	or	b
 	jp	nz,dsub
 	ld	a,l			; the root: HL < entries?
@@ -114,8 +125,17 @@ dirent:	ld	a,(dircl)
 	call	dxidx
 	ld	e,(ix+D_ROOTSEC)
 	ld	d,(ix+D_ROOTSEC+1)
-de_s:	add	hl,de			; dsub's sector too
-	ld	(dsec),hl
+	xor	a			; the root is below 65536
+	ld	(lbax),a
+de_s:	add	hl,de			; dsub's sector too, after clsec
+	jr	nc,de_s1
+	push	hl			; the third byte of the sector
+	ld	hl,lbax
+	inc	(hl)
+	pop	hl
+de_s1:	ld	(dsec),hl
+	ld	a,(lbax)
+	ld	(dsecx),a
 	ex	de,hl
 	call	getsec
 	ret	nz
@@ -140,7 +160,13 @@ dxidx:	ld	a,l
 	jp	shrb
 
 ; HL = the entry the FCB points at (F_DSEC, F_DIDX), in the cache
-fcbent:	ld	de,(CFCB+F_DSEC)
+fcbent:	ld	a,(CFCB+F_DRIVE)	; its third byte
+	rrca
+	rrca
+	rrca
+	and	1Fh
+	ld	(lbax),a
+	ld	de,(CFCB+F_DSEC)
 	call	getsec
 	ret	nz
 	ld	a,(CFCB+F_DIDX)
@@ -161,6 +187,8 @@ fcbpat:	ld	hl,CFCB+F_NAME
 	ld	h,b			; B = 0
 	ld	l,b
 	ld	(dircl),hl
+	ld	a,b
+	ld	(dircl+2),a
 	ret
 fdp_e:	inc	sp			; out of fcbdrwp's caller too
 	inc	sp
@@ -199,13 +227,23 @@ fcbfill: push	hl
 	inc	hl
 	res	7,(hl)
 	pop	hl
+	push	hl			; clx = the first cluster's third byte
+	call	entcl
+	pop	hl
 	ld	de,DE_CLUS
 	add	hl,de
 	ld	de,CFCB+F_MAGIC		; F_MAGIC to F_FLAG, in order: the
 	ld	a,MAGIC
 	ld	(de),a
 	inc	de
-	ld	a,(fdrive)		; drive,
+	push	hl
+	ld	a,(dsecx)		; drive, and dsec's third byte
+	rlca
+	rlca
+	rlca
+	ld	hl,fdrive
+	or	(hl)
+	pop	hl
 	ld	(de),a
 	inc	de
 	ld	bc,6			; first cluster and size (DE_CLUS, DE_SIZE),
@@ -223,6 +261,9 @@ fcbfill: push	hl
 	inc	de
 	ld	(de),a			; F_FLAG 0
 	ld	(CFCB+F_S1),a
+	ld	hl,(CFCB+F_CLUS)	; and the third bytes
+	call	sfclus
+	call	sfccl
 	; fall into setrc
 
 ; RC = the records of extent (S2, EX) that the file holds
@@ -329,18 +370,28 @@ fm_no:	ld	a,R_NOFILE
 fm_old:	call	isro			; an old one: free its clusters
 	ld	a,E_ROFILE
 	ret	nz
-	ld	de,DE_CLUS
-	add	hl,de
-	ld	e,(hl)
-	inc	hl
-	ld	d,(hl)
-	dec	hl
-	ld	b,6
-fm_5:	ld	(hl),0			; no clusters, size 0
+	push	hl
+	call	entcl
+	ex	de,hl
+	pop	hl
+	push	de
+	ld	a,(clx)
+	push	af
+	xor	a			; no clusters, size 0
+	ld	(clx),a
+	ld	d,a
+	ld	e,a
+	call	stent
+	ld	bc,DE_SIZE
+	add	hl,bc
+	ld	b,4
+fm_5:	ld	(hl),0
 	inc	hl
 	djnz	fm_5
 	call	bdirty
-	ex	de,hl
+	pop	af
+	ld	(clx),a
+	pop	hl
 	call	fatfree
 	ret	nz
 	ld	hl,(dpos)		; the entry may have left the cache
@@ -386,8 +437,8 @@ fclose:	ld	a,(CFCB+F_MAGIC)
 	call	fcbsync
 	ret	nz
 	call	stamp
-	xor	a
-	ld	(CFCB+F_FLAG),a
+	ld	hl,CFCB+F_FLAG
+	res	0,(hl)
 fc_2:	jp	flushall
 fc_open: call	fopen			; never opened here: CP/M finds the
 	ret	nz			; entry, and so do we
@@ -429,8 +480,8 @@ rccut:	ld	a,(CFCB+F_FLAG)
 	ld	(CFCB+F_SIZE+2),a
 	call	ftrunc
 	ret	nz
-	ld	a,1
-	ld	(CFCB+F_FLAG),a
+	ld	hl,CFCB+F_FLAG
+	set	0,(hl)
 rc_9:	xor	a
 	ret
 
@@ -449,7 +500,13 @@ fcbsync: call	fcbent			; Z, A = 0
 	ld	bc,6
 	ldir
 	pop	hl
-	jp	bdirty			; Z, A = 0 still
+	push	hl			; and its third byte
+	call	fclus
+	ex	de,hl
+	pop	hl
+	call	stent
+	xor	a
+	jp	bdirty
 
 ; ------------------------------------------------------------------
 ; Records. HL = record number. The FCB is open (F_MAGIC).
@@ -479,16 +536,15 @@ rl_1:	ld	hl,(frec)		; sector number in the file
 	ld	b,(ix+D_SPCSH)		; the cluster's place in the chain
 	call	shrb
 	ld	(ford),hl
-	ld	hl,(CFCB+F_CLUS)	; an empty file: give it a cluster
-	ld	a,h
-	or	l
+	call	fclus			; an empty file: give it a cluster
+	call	clzero
 	jr	nz,rl_4
 	ld	a,(fwflag)
 	or	a
 	jp	z,rl_eof
 	call	fatalloc
 	ret	nz
-	ld	(CFCB+F_CLUS),hl
+	call	sfclus
 	call	cfresh
 	ld	hl,CFCB+F_FLAG
 	set	0,(hl)
@@ -498,20 +554,19 @@ rl_4:	ld	de,(CFCB+F_CORD)	; start from the cached place if it is
 	or	a
 	sbc	hl,de
 	jr	c,rl_5
-	ld	hl,(CFCB+F_CCL)
-	ld	a,h
-	or	l
+	call	fccl
+	call	clzero
 	jr	nz,rl_8
 rl_5:	ld	hl,0			; else from the first cluster
 	ld	(CFCB+F_CORD),hl
-	ld	hl,(CFCB+F_CLUS)
-	ld	(CFCB+F_CCL),hl
+	call	fclus
+	call	sfccl
 rl_8:	ld	hl,(CFCB+F_CORD)	; there yet?
 	ld	de,(ford)
 	or	a
 	sbc	hl,de
 	jr	z,rl_10
-	ld	hl,(CFCB+F_CCL)	; on down the chain
+	call	fccl			; on down the chain
 	call	fatget
 	ret	nz
 	call	fateoc
@@ -519,16 +574,16 @@ rl_8:	ld	hl,(CFCB+F_CORD)	; there yet?
 	ld	a,(fwflag)		; the end: grow it, or end of file
 	or	a
 	jr	z,rl_eof
-	ld	hl,(CFCB+F_CCL)
+	call	fccl
 	call	fatgrow
 	ret	nz
 	call	cfresh
-rl_9:	ld	(CFCB+F_CCL),hl	; F_CCL and F_CORD move together, so
+rl_9:	call	sfccl			; F_CCL and F_CORD move together, so
 	ld	hl,(CFCB+F_CORD)	; an error on the way leaves them right
 	inc	hl
 	ld	(CFCB+F_CORD),hl
 	jr	rl_8
-rl_10:	ld	hl,(CFCB+F_CCL)
+rl_10:	call	fccl
 	call	fateoc			; a first cluster out of range, on a
 	jr	c,rl_eof		; damaged disk: the end, not the root
 	call	clsec
@@ -537,7 +592,14 @@ rl_10:	ld	hl,(CFCB+F_CCL)
 	ld	e,a
 	jr	nc,rl_11
 	inc	d
+	jr	nz,rl_11
+	push	hl			; the third byte of the sector
+	ld	hl,lbax
+	inc	(hl)
+	pop	hl
 rl_11:	ld	(fsect),de
+	ld	a,(lbax)
+	ld	(fsectx),a
 	ld	a,(frec)		; offset of the record in the sector:
 	and	3			; (record & 3) * 128
 	rrca
@@ -553,18 +615,24 @@ rl_eof:	ld	a,1
 	or	a
 	ret
 
-; A newly allocated cluster HL: its sectors read as zeros, so that a
+; A newly allocated cluster clx:HL: its sectors read as zeros, so that a
 ; record written into it does not read old data, and a short last
 ; sector reads clean. Each is zeroed in the cache as it is first
 ; written (frsec), not all at once: at 4 or 8 sectors a cluster that
 ; pushed the FAT and directory out of the cache, and each sector went
 ; out as zeros, came back in and went out again. The rest of the last
-; one is zeroed here, when the file grows past it. Keeps HL.
+; one is zeroed here, when the file grows past it. Keeps clx:HL.
 cfresh:	push	hl
+	ld	a,(clx)
+	push	af
 	call	frdone
+	pop	af
+	ld	(clx),a
 	pop	hl
-	ld	(frcl),hl
+	ld	de,frcl
+	call	stcl
 	ld	a,(CFCB+F_DRIVE)
+	and	7
 	inc	a
 	ld	(frdrv),a
 	xor	a
@@ -579,6 +647,7 @@ frdone:	ld	a,(frdrv)
 	dec	a
 	ld	b,a
 	ld	a,(CFCB+F_DRIVE)
+	and	7
 	cp	b
 	jr	z,frd_1
 	ld	a,(drvnum)		; another drive's: zeroed there, as
@@ -600,7 +669,7 @@ frd_1:	ld	a,(ix+D_SPC)
 	ret	nc
 	jr	frzero
 
-; Cluster HL of drive drvnum is being freed: if it is the fresh one,
+; Cluster clx:HL of drive drvnum is being freed: if it is the fresh one,
 ; forget it. Keeps BC, DE, HL.
 frgone:	ld	a,(frdrv)
 	or	a
@@ -612,10 +681,8 @@ frgone:	ld	a,(frdrv)
 	pop	hl
 	ret	nz
 	push	de
-	ld	de,(frcl)
-	or	a
-	sbc	hl,de
-	add	hl,de
+	ld	de,frcl
+	call	clcmp
 	pop	de
 	ret	nz
 	xor	a
@@ -628,12 +695,12 @@ frsec:	ld	a,(frdrv)
 	dec	a
 	ld	b,a
 	ld	a,(CFCB+F_DRIVE)
+	and	7
 	cp	b
 	jr	nz,fs_get
-	ld	hl,(CFCB+F_CCL)
-	ld	de,(frcl)
-	or	a
-	sbc	hl,de
+	call	fccl
+	ld	de,frcl
+	call	clcmp
 	jr	nz,fs_get
 	ld	a,(fsin)
 	ld	b,a			; up to this one
@@ -641,12 +708,15 @@ frsec:	ld	a,(frdrv)
 	cp	b
 	jr	z,frzero
 	jr	c,frzero
-fs_get:	ld	de,(fsect)
+fs_get:	ld	a,(fsectx)
+	ld	(lbax),a
+	ld	de,(fsect)
 	jp	getsec
 ; Zero sectors A to B of the fresh cluster: HL = the last one's buffer
 frzero:	ld	c,a
 frz_1:	push	bc
-	ld	hl,(frcl)
+	ld	hl,frcl
+	call	ldcl
 	call	clsec
 	pop	bc
 	ld	a,e
@@ -654,6 +724,11 @@ frz_1:	push	bc
 	ld	e,a
 	jr	nc,frz_2
 	inc	d
+	jr	nz,frz_2
+	push	hl			; the third byte of the sector
+	ld	hl,lbax
+	inc	(hl)
+	pop	hl
 frz_2:	push	bc
 	call	newsec
 	pop	bc
@@ -682,7 +757,9 @@ rdrec:	xor	a
 	jr	z,rr_1
 	cp	1			; end of file: Z, A = 1
 	ret
-rr_1:	ld	de,(fsect)
+rr_1:	ld	a,(fsectx)
+	ld	(lbax),a
+	ld	de,(fsect)
 	call	getsec
 	ret	nz
 	ld	de,(foff)
@@ -721,6 +798,7 @@ rr_9:	xor	a
 ; Write CBUF as record HL. A = 0, or NZ with an error (A = E_FULL when
 ; the disk is full).
 wrrec:	ld	a,(CFCB+F_DRIVE)
+	and	7
 	call	drvix
 	call	wrprot
 	ret	nz
@@ -821,12 +899,7 @@ fl_00:	cp	R_NOFILE
 fl_1:	jr	nz,fl_9
 	ld	(hl),0E5h
 	call	bdirty
-	ld	de,DE_CLUS
-	add	hl,de
-	ld	e,(hl)
-	inc	hl
-	ld	d,(hl)
-	ex	de,hl
+	call	entcl
 	call	fatfree
 	ret	nz
 	ld	hl,(dpos)
@@ -925,18 +998,21 @@ fn_x:	push	af			; an error: what was renamed is kept
 ; the new name is taken or the folder has no room, or an error.
 fmove:	call	fcbdrw
 	ret	nz
-	ld	hl,(dircl)
-	ld	(mvsrc),hl
+	ld	hl,dircl
+	ld	de,mvsrc
+	call	cp3
 	call	mvname			; the new name must be free there
 	call	dsany
 	jr	z,fn_no
 	cp	R_NOFILE
 	ret	nz
-	ld	hl,(mvsrc)
-	ld	(dircl),hl
+	ld	hl,mvsrc
+	ld	de,dircl
+	call	cp3
 	call	fcbpat			; $$$.SUB: the root, so the old entry
-	ld	hl,(dircl)		; is freed there
-	ld	(mvsrc),hl
+	ld	hl,dircl		; is freed there
+	ld	de,mvsrc
+	call	cp3
 	call	dsfirst
 	jr	z,fm_1
 	cp	R_NOFILE
@@ -963,8 +1039,9 @@ fm_2:	ld	de,11			; with the old one's attributes,
 	ld	bc,21
 	ldir
 	call	bdirty
-	ld	hl,(mvsrc)		; then the old one goes
-	ld	(dircl),hl
+	ld	hl,mvsrc		; then the old one goes
+	ld	de,dircl
+	call	cp3
 	ld	hl,(mvpos)
 	ld	(dpos),hl
 	call	dirent
@@ -974,8 +1051,9 @@ fm_2:	ld	de,11			; with the old one's attributes,
 	jp	flushall
 
 ; dircl = mvdst, spat = the name at CFCB+17
-mvname:	ld	hl,(mvdst)
-	ld	(dircl),hl
+mvname:	ld	hl,mvdst
+	ld	de,dircl
+	call	cp3
 	ld	hl,CFCB+17
 	jp	namepat
 
@@ -1031,23 +1109,30 @@ ftrunc:	ld	hl,(CFCB+F_SIZE)	; sectors = (size + 511) / 512
 	add	hl,de
 	ld	b,(ix+D_SPCSH)
 	call	shrb
-	ld	de,0			; the chain restarts the cache
-	ld	(CFCB+F_CORD),de
-	ld	de,(CFCB+F_CLUS)
-	ld	(CFCB+F_CCL),de
-	ld	a,h
-	or	l
-	jr	nz,tr_3
-	ex	de,hl			; none kept: free it all, DE = 0
-	ld	(CFCB+F_CLUS),de
-	ld	(CFCB+F_CCL),de
-	jp	fatfree
-tr_3:	ld	a,d			; no chain: nothing to cut
-	or	e
-	ret	z
-	ld	b,h			; walk to the last cluster kept
+	ld	b,h			; BC = the clusters kept
 	ld	c,l
-	ex	de,hl
+	ld	hl,0			; the chain restarts the cache
+	ld	(CFCB+F_CORD),hl
+	call	fclus
+	call	sfccl
+	ld	a,b
+	or	c
+	jr	nz,tr_3
+	push	hl			; none kept: free it all
+	ld	a,(clx)
+	push	af
+	xor	a
+	ld	(clx),a
+	ld	h,a
+	ld	l,a
+	call	sfclus
+	call	sfccl
+	pop	af
+	ld	(clx),a
+	pop	hl
+	jp	fatfree
+tr_3:	call	clzero			; no chain: nothing to cut
+	ret	z
 tr_4:	dec	bc
 	ld	a,b
 	or	c
@@ -1060,14 +1145,94 @@ tr_4:	dec	bc
 	jr	nc,tr_4
 	xor	a			; the chain is shorter already
 	ret
-tr_5:	push	hl			; end the chain here, free the rest
+tr_5:	ld	a,(clx)			; end the chain here, free the rest
+	push	af
+	push	hl
 	call	fatget
 	pop	de
+	pop	bc
 	ret	nz
+	ld	a,(clx)
+	push	af
 	push	hl
 	ex	de,hl
-	ld	de,0FFFFh
-	call	fatset
+	ld	a,b
+	ld	(clx),a
+	call	fatend
 	pop	hl
+	pop	bc
+	ld	a,b
+	ld	(clx),a
 	ret	nz
 	jp	fatfree
+
+; clx:HL = the FCB's first cluster, or its chain cache's
+fclus:	ld	hl,(CFCB+F_CLUS)
+	ld	a,(CFCB+F_FLAG)
+	jr	fcl_x
+fccl:	ld	hl,(CFCB+F_CCL)
+	ld	a,(CFCB+F_DIDX)
+fcl_x:	rrca
+	rrca
+	rrca
+	rrca
+	and	0Fh
+	ld	(clx),a
+	ret
+; The FCB's first cluster = clx:HL, or its chain cache's. Keeps BC, DE,
+; HL.
+sfclus:	ld	(CFCB+F_CLUS),hl
+	push	hl
+	ld	hl,CFCB+F_FLAG
+	jr	sfc_x
+sfccl:	ld	(CFCB+F_CCL),hl
+	push	hl
+	ld	hl,CFCB+F_DIDX
+sfc_x:	ld	a,(clx)
+	rlca
+	rlca
+	rlca
+	rlca
+	xor	(hl)
+	and	0F0h
+	xor	(hl)
+	ld	(hl),a
+	pop	hl
+	ret
+
+; clx:HL = the first cluster of the entry at HL: DE_CLUS, and on FAT32
+; DE_CLHI's low byte. Keeps BC, DE.
+entcl:	push	de
+	ld	de,DE_CLHI
+	add	hl,de
+	ld	a,(ix+D_FAT16)
+	cp	2
+	ld	a,(hl)
+	jr	z,ecl_1
+	xor	a
+ecl_1:	ld	(clx),a
+	ld	de,DE_CLUS-DE_CLHI
+	add	hl,de
+	ld	a,(hl)
+	inc	hl
+	ld	h,(hl)
+	ld	l,a
+	pop	de
+	ret
+
+; The entry at HL's first cluster = clx:DE, DE_CLHI 0 on FAT12 and
+; FAT16. Keeps HL.
+stent:	push	hl
+	ld	bc,DE_CLHI
+	add	hl,bc
+	ld	a,(clx)
+	ld	(hl),a
+	inc	hl
+	ld	(hl),0
+	ld	bc,DE_CLUS-DE_CLHI-1
+	add	hl,bc
+	ld	(hl),e
+	inc	hl
+	ld	(hl),d
+	pop	hl
+	ret

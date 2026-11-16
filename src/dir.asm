@@ -10,7 +10,7 @@ pthptr:	ld	hl,cwdpth
 	jr	dvoff
 ; HL = where drive A's current folder's cluster is
 cwdptr:	ld	hl,cwdcl
-	ld	de,2
+	ld	de,3
 dvoff:	or	a
 	ret	z
 	add	hl,de
@@ -21,26 +21,31 @@ dvoff:	or	a
 ; set, or dirov for drive dirovd, a path's. Keeps HL and DE. Z, A = 0.
 setdir:	push	hl
 	push	de
-	ld	hl,0
+	push	bc
+	ld	hl,clzz
 	ld	a,(rootf)
 	or	a
 	jr	nz,sdr_1
-	ld	hl,(dirov)
+	ld	hl,dirov
 	ld	a,(dirovd)
 	ld	e,a
 	ld	a,(drvnum)
 	cp	e
 	jr	z,sdr_1
 	call	cwdptr
-	ld	a,(hl)
-	inc	hl
-	ld	h,(hl)
-	ld	l,a
-sdr_1:	ld	(dircl),hl
+sdr_1:	ld	de,dircl
+	call	cp3
+	pop	bc
 	pop	de
 	pop	hl
 	xor	a
 	ret
+
+; 3 bytes, a cluster, from HL to DE
+cp3:	ld	bc,3
+	ldir
+	ret
+clzz:	db	0,0,0			; the root's
 
 ; After a drive is mounted: if its current folder is not a folder on
 ; this disk, which may have been changed, back to the root. Its first
@@ -50,44 +55,35 @@ sdr_1:	ld	(dircl),hl
 cwdchk:	ld	a,(drvnum)
 	call	cwdptr
 	push	hl
-	ld	e,(hl)
-	inc	hl
-	ld	d,(hl)
-	ld	a,d
-	or	e
+	call	ldcl
+	ld	de,cccl
+	call	stcl
+	call	clzero
 	jr	z,cc_ok
-	ex	de,hl
 	call	fateoc
 	jr	c,cc_bad
-	push	hl
 	call	clsec
 	call	getsec
-	pop	de
 	jr	nz,cc_bad
 	ld	a,(hl)
 	cp	'.'
 	jr	nz,cc_bad
 	inc	hl
 	ld	a,(hl)
+	dec	hl
 	cp	' '
 	jr	nz,cc_bad
-	ld	bc,DE_CLUS-1
-	add	hl,bc
-	ld	a,(hl)
-	cp	e
+	push	hl
+	call	entcl
+	ld	de,cccl
+	call	clcmp
+	pop	hl
 	jr	nz,cc_bad
-	inc	hl
-	ld	a,(hl)
-	cp	d
-	jr	nz,cc_bad
-	ld	bc,31			; the folder above, from ".."
-	add	hl,bc
-	ld	a,(hl)
-	inc	hl
-	ld	h,(hl)
-	ld	l,a
-	ld	(dircl),hl
-	push	de
+	ld	de,32			; the folder above, from ".."
+	add	hl,de
+	call	entcl
+	ld	de,dircl
+	call	stcl
 	ld	a,(drvnum)
 	call	pthptr
 	ld	d,h			; DE = its last part
@@ -103,11 +99,10 @@ cc_1:	ld	a,(hl)
 	jr	cc_1
 cc_2:	ex	de,hl
 	call	pcomp
-	call	z,wpfind		; HL = the cluster that name has
-	pop	de
+	call	z,wpfind		; clx:HL = the cluster that name has
 	jr	nz,cc_bad
-	or	a
-	sbc	hl,de
+	ld	de,cccl
+	call	clcmp
 	jr	z,cc_ok
 cc_bad:	pop	hl
 	ld	a,(drvnum)
@@ -115,6 +110,8 @@ cc_bad:	pop	hl
 cwdroot: push	af
 	call	cwdptr
 	xor	a
+	ld	(hl),a
+	inc	hl
 	ld	(hl),a
 	inc	hl
 	ld	(hl),a
@@ -141,14 +138,14 @@ dsub:	call	dxidx			; HL = the sector in the folder
 	push	hl
 	ld	b,h
 	ld	c,l
-	ld	hl,(dircl)		; the folder walked last, on this drive,
-	ld	de,(dscdir)		; and not past here?
-	or	a
-	sbc	hl,de
+	call	dclget			; the folder walked last, on this drive,
+	ld	de,dscdir		; and not past here?
+	call	clcmp
 	jr	nz,dsu_0
 	push	ix
 	pop	hl
 	ld	de,(dscix)
+	or	a
 	sbc	hl,de
 	jr	nz,dsu_0
 	ld	h,b
@@ -158,10 +155,12 @@ dsub:	call	dxidx			; HL = the sector in the folder
 	jr	c,dsu_0
 	ld	b,h			; on from there
 	ld	c,l
-	ld	hl,(dsccl)
+	ld	hl,dsccl
+	call	ldcl
 	jr	dsu_1
-dsu_0:	ld	hl,(dircl)		; from the start
-dsu_1:	ld	(dlast),hl
+dsu_0:	call	dclget			; from the start
+dsu_1:	ld	de,dlast
+	call	stcl
 	ld	a,b
 	or	c
 	jr	z,dsu_2
@@ -173,11 +172,19 @@ dsu_1:	ld	(dlast),hl
 	jr	c,dsu_x			; past the end of the folder
 	dec	bc
 	jr	dsu_1
-dsu_2:	ld	(dsccl),hl		; kept for the next
+dsu_2:	ld	de,dsccl		; kept for the next
+	call	stcl
 	pop	de
 	ld	(dscord),de
-	ld	de,(dircl)
-	ld	(dscdir),de
+	push	hl
+	ld	a,(clx)
+	push	af
+	call	dclget
+	ld	de,dscdir
+	call	stcl
+	pop	af
+	ld	(clx),a
+	pop	hl
 	push	ix
 	pop	de
 	ld	(dscix),de
@@ -194,6 +201,20 @@ dsu_e:	ld	b,a
 	or	a
 	ret
 
+; clx:HL = folder dircl's first cluster, and on FAT32 the root's for 0
+dclget:	ld	hl,dircl
+	call	ldcl
+	call	clzero
+	ret	nz
+	ld	a,(ix+D_FAT16)
+	cp	2
+	ret	nz
+	ld	l,(ix+D_ROOTCL)
+	ld	h,(ix+D_ROOTCL+1)
+	ld	a,(ix+D_ROOTCL+2)
+	ld	(clx),a
+	ret
+
 ; A free entry in folder dircl, made from spat: the name, archive, no
 ; data. HL = it, dpos its number. A folder that is full grows by a
 ; cluster. NZ, A = R_NOFILE when there is no room, or an error.
@@ -203,9 +224,8 @@ dn_0:	ld	(dpos),hl
 	jr	z,dn_2
 	cp	R_NOFILE
 	ret	nz
-	ld	hl,(dircl)		; the root is full
-	ld	a,h
-	or	l
+	call	dclget			; the root is full, but FAT32's
+	call	clzero
 	jr	z,dn_full
 	call	dgrow
 	jr	nz,dn_full
@@ -232,10 +252,11 @@ dn_full: ld	a,R_NOFILE
 	ret
 
 ; One more cluster, empty, on the end of folder dircl: after dlast
-dgrow:	ld	hl,(dlast)
+dgrow:	ld	hl,dlast
+	call	ldcl
 	call	fatgrow
 	ret	nz
-; Fill cluster HL with zeros
+; Fill cluster clx:HL with zeros
 zclus:	call	clsec
 	ld	b,(ix+D_SPC)
 zc_1:	call	newsec			; keeps BC and DE
@@ -248,7 +269,12 @@ zc_1:	call	newsec			; keeps BC and DE
 	pop	de
 	pop	bc
 	inc	de
-	djnz	zc_1
+	ld	a,d			; on into the sector's third byte
+	or	e
+	jr	nz,zc_2
+	ld	hl,lbax
+	inc	(hl)
+zc_2:	djnz	zc_1
 	xor	a
 	ret
 
@@ -294,6 +320,7 @@ wk_r:	inc	hl
 	ld	d,a
 	ld	e,a
 	ld	(dircl),de
+	ld	(dircl+2),a
 wk_2:	ld	a,(hl)
 	call	pcend
 	jr	z,wk_ok
@@ -411,13 +438,14 @@ wkpart:	ld	a,(spat)
 	jr	z,wp_up
 	xor	a
 	ret
-wp_up:	ld	hl,(dircl)
-	ld	a,h
-	or	l
+wp_up:	ld	hl,dircl
+	call	ldcl
+	call	clzero
 	ret	z			; above the root is the root
 	call	wpfind
 	ret	nz
-	ld	(dircl),hl
+	ld	de,dircl
+	call	stcl
 	ld	hl,wpath		; the path less its last part
 	ld	d,h
 	ld	e,l
@@ -435,7 +463,8 @@ wu_2:	ld	(de),a
 	ret
 wp_1:	call	wpfind
 	ret	nz
-	ld	(dircl),hl
+	ld	de,dircl
+	call	stcl
 	ld	hl,wpath
 	xor	a
 	ld	bc,CWDLEN
@@ -489,7 +518,7 @@ dsdir:	ld	a,A_DIR
 	ld	(dsdirs),a
 	jp	dsfirst
 
-; HL = the first cluster of the folder spat names in dircl, Z. dpos is
+; clx:HL = the first cluster of the folder spat names in dircl, Z. dpos is
 ; its entry. NZ, A = E_NOPATH if there is none, or its cluster is out of
 ; range on a damaged disk. 0 is the root, as ".." has it.
 wpfind:	call	dsdir
@@ -499,13 +528,8 @@ wf_2:	jr	nz,wf_no
 	ld	b,A_DIR
 	call	isattr
 	jr	z,wf_1			; a file of that name
-	ld	de,DE_CLUS
-	add	hl,de
-	ld	a,(hl)
-	inc	hl
-	ld	h,(hl)
-	ld	l,a
-	or	h
+	call	entcl
+	call	clzero
 	jr	z,wf_9			; the root: Z, A = 0
 	call	fateoc
 	ld	a,R_NOFILE
@@ -558,8 +582,11 @@ pps_2:	ex	de,hl
 	pop	bc
 	ld	(hl),b
 	jp	nz,sherr
-	ld	de,(dircl)
-	ld	(dirov),de
+	push	hl
+	ld	hl,dircl
+	ld	de,dirov
+	call	cp3
+	pop	hl
 	ld	a,(drvnum)
 	ld	(dirovd),a
 	ld	de,(ppfcb)		; then the name
@@ -575,22 +602,20 @@ pps_2:	ex	de,hl
 	ret
 
 ; COPY's source folder, or its destination's, for setdir
-cpsrcd:	ld	hl,(srcdir)
-	ld	a,(srcdrv)
+cpsrcd:	ld	hl,srcdir
 	jr	cpset
-cpdstd:	ld	hl,(dstdir)
-	ld	a,(dstdrv)
-cpset:	ld	(dirov),hl
-	ld	(dirovd),a
+cpdstd:	ld	hl,dstdir
+cpset:	ld	de,dirov		; the folder and its drive
+	ld	bc,4
+	ldir
 	ret
 
 ; Make drive drvnum's current folder dircl, its path wpath
 cdset:	ld	a,(drvnum)
 	call	cwdptr
-	ld	de,(dircl)
-	ld	(hl),e
-	inc	hl
-	ld	(hl),d
+	ex	de,hl
+	ld	hl,dircl
+	call	cp3
 	ld	a,(drvnum)
 	call	pthptr
 	ex	de,hl
@@ -633,22 +658,23 @@ xmkdir:	call	wklast
 	ret	nz
 	call	fatalloc		; its cluster, empty
 	ret	nz
-	ld	(dcl),hl
+	ld	de,dcl
+	call	stcl
 	call	zclus
 	ret	nz
 	call	dnew			; its entry
 	jr	z,mkd_1
 	push	af			; none: the cluster goes back
-	ld	hl,(dcl)
+	ld	hl,dcl
+	call	ldcl
 	call	fatfree
 	pop	bc
 	ret	nz
 	ld	a,b
 	cp	R_NOFILE
 	ret	nz
-	ld	hl,(dircl)		; no entry: the root has no more, a
-	ld	a,h			; folder could not grow
-	or	l
+	call	dclget			; no entry: the root has no more, a
+	call	clzero			; folder could not grow
 	ld	a,E_FULL
 	jr	nz,mkd_f
 	ld	a,E_DIRFULL
@@ -659,7 +685,8 @@ mkd_ex:	ld	a,E_EXISTS
 	ret
 mkd_1:	ld	de,spat
 	call	dentry
-	ld	hl,(dcl)		; then . and .. in it
+	ld	hl,dcl			; then . and .. in it
+	call	ldcl
 	call	clsec
 	call	getsec
 	ret	nz
@@ -669,8 +696,11 @@ mkd_1:	ld	de,spat
 	pop	hl
 	ld	de,32
 	add	hl,de
-	ld	de,(dircl)
-	ld	(dcl),de
+	push	hl
+	ld	hl,dircl		; 0 for the root, FAT32's too
+	ld	de,dcl
+	call	cp3
+	pop	hl
 	ld	de,dotdot
 	call	dentry
 	jp	flushall
@@ -679,13 +709,11 @@ mkd_1:	ld	de,spat
 dentry:	ld	a,A_DIR
 	call	mkent
 	push	hl
-	ld	de,DE_CLUS
-	add	hl,de
-	ld	de,(dcl)
-	ld	(hl),e
-	inc	hl
-	ld	(hl),d
+	ld	hl,dcl
+	call	ldcl
+	ex	de,hl
 	pop	hl
+	call	stent
 	jp	stamp
 
 ; An entry at HL: the 11-byte name at DE, attribute A, the rest 0.
@@ -714,23 +742,23 @@ xrmdir:	call	wklast
 	ret	nz
 	call	wpfind
 	ret	nz
-	ld	(dcl),hl
+	ld	de,dcl
+	call	stcl
 	ld	a,(drvnum)		; the current folder?
 	call	cwdptr
-	ld	a,(hl)
-	inc	hl
-	ld	h,(hl)
-	ld	l,a
-	ld	de,(dcl)
-	or	a
-	sbc	hl,de
+	call	ldcl
+	ld	de,dcl
+	call	clcmp
 	ld	a,E_INUSE
 	jp	z,wp_e
 	ld	hl,(dpos)		; its entry, for after
 	ld	(rmpos),hl
-	ld	hl,(dircl)
-	ld	(rmpar),hl
-	ld	(dircl),de		; empty but for . and ..?
+	ld	hl,dircl
+	ld	de,rmpar
+	call	cp3
+	ld	hl,dcl			; empty but for . and ..?
+	ld	de,dircl
+	call	cp3
 	ld	hl,spat
 	ld	b,11
 rm_0:	ld	(hl),'?'
@@ -747,14 +775,16 @@ rm_1:	jr	nz,rm_2
 rm_2:	call	dsdone
 	cp	R_NOFILE
 	jp	nz,wp_e
-	ld	hl,(rmpar)		; it is: off with its entry and chain
-	ld	(dircl),hl
+	ld	hl,rmpar		; it is: off with its entry and chain
+	ld	de,dircl
+	call	cp3
 	ld	hl,(rmpos)
 	call	dirent
 	ret	nz
 	ld	(hl),0E5h
 	call	bdirty
-	ld	hl,(dcl)
+	ld	hl,dcl
+	call	ldcl
 	call	fatfree
 	ret	nz
 	ld	hl,(rmpos)
